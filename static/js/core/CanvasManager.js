@@ -1,0 +1,559 @@
+/**
+ * Fabric.js Canvas 管理器
+ * 负责：加载原图、渲染标注、处理鼠标交互、管理标注对象生命周期
+ */
+class CanvasManager {
+    constructor() {
+        this.canvasEl = document.getElementById('annotationCanvas');
+        this.fabric = null;
+        this.zoom = 1;
+        this.isDrawing = false;
+        this.drawStartX = 0;
+        this.drawStartY = 0;
+        this.drawPreview = null;
+    }
+
+    /**
+     * 初始化 Fabric Canvas
+     */
+    init() {
+        const area = document.getElementById('canvasArea');
+        this.fabric = new fabric.Canvas(this.canvasEl, {
+            width: area.clientWidth,
+            height: area.clientHeight,
+            selection: true,
+            preserveObjectStacking: true,
+            fireRightClick: true,
+            stopContextMenu: false,
+        });
+
+        this._bindEvents();
+        this._updateStatusBar();
+    }
+
+    /**
+     * 加载原图
+     */
+    loadImage(base64Data) {
+        return new Promise((resolve, reject) => {
+            // 检测图片格式
+            let mimeType = 'image/jpeg';
+            if (base64Data.startsWith('data:image/png')) mimeType = 'image/png';
+            else if (base64Data.startsWith('data:image/')) {
+                const m = base64Data.match(/^data:image\/([^;]+)/);
+                if (m) mimeType = 'image/' + m[1];
+            }
+            
+            // 如果base64已经包含data URI前缀，直接使用；否则添加前缀
+            const dataUrl = base64Data.startsWith('data:') 
+                ? base64Data 
+                : 'data:' + mimeType + ';base64,' + base64Data;
+            
+            fabric.Image.fromURL(dataUrl, (img) => {
+                if (!img || !img.width) {
+                    reject(new Error('图片加载失败'));
+                    return;
+                }
+                
+                // 适配画布大小
+                const area = document.getElementById('canvasArea');
+                const maxW = area.clientWidth - 40;
+                const maxH = area.clientHeight - 40;
+                
+                let scale = 1;
+                if (img.width > maxW || img.height > maxH) {
+                    scale = Math.min(maxW / img.width, maxH / img.height);
+                }
+                
+                img.set({
+                    scaleX: scale,
+                    scaleY: scale,
+                    selectable: false,
+                    evented: false,
+                    hasControls: false,
+                });
+
+                this.fabric.setDimensions({
+                    width: img.width * scale + 20,
+                    height: img.height * scale + 20,
+                });
+                
+                this.fabric.backgroundImage = img;
+                this.fabric.renderAll();
+                this.zoom = scale;
+                
+                // 居中画布
+                this.fabric.viewportTransform = [1, 0, 0, 1, 10, 10];
+                this.fabric.renderAll();
+                
+                this._updateStatusBar();
+                resolve(img);
+            }, { crossOrigin: 'anonymous' });
+        });
+    }
+
+    /**
+     * 渲染所有标注
+     */
+    renderAnnotations(annotations) {
+        // 清除旧标注
+        this.fabric.getObjects().forEach(obj => {
+            if (obj.annotationType) {
+                this.fabric.remove(obj);
+            }
+        });
+
+        annotations.forEach(ann => {
+            const fabricObj = this._createAnnotationObject(ann);
+            if (fabricObj) {
+                fabricObj.annId = ann.id;
+                this.fabric.add(fabricObj);
+                ann.fabricObject = fabricObj;
+            }
+        });
+
+        this.fabric.renderAll();
+        this._updateStatusBar();
+    }
+
+    /**
+     * 创建单个标注的 Fabric 对象
+     * 标注的Y坐标在原始图片中已包含偏移，但Canvas缩放后偏移量也被缩放。
+     * 这里额外增加固定像素偏移，确保标注不覆盖文字。
+     */
+    _createAnnotationObject(ann) {
+        const scale = this.zoom;
+        const padding = 10;
+        // 固定像素偏移：波浪线和横线在文字底部下方额外偏移，不随缩放变化
+        const fixedYOffset = ann.type === 'wavy' ? 12 : (ann.type === 'line' ? 10 : 0);
+        const sx1 = ann.startX * scale + padding;
+        const sy1 = ann.startY * scale + padding + fixedYOffset;
+        const sx2 = ann.endX * scale + padding;
+        const sy2 = ann.endY * scale + padding + fixedYOffset;
+
+        let obj = null;
+        switch (ann.type) {
+            case 'wavy':
+                obj = WavyLine.create(sx1, sy1, sx2, sy2);
+                break;
+            case 'line':
+                obj = StraightLine.create(sx1, sy1, sx2, sy2);
+                break;
+            case 'star':
+                obj = StarAnnotation.create(sx1, sy1);
+                break;
+        }
+        return obj;
+    }
+
+    /**
+     * 添加单个标注到画布
+     */
+    addAnnotation(ann) {
+        const obj = this._createAnnotationObject(ann);
+        if (obj) {
+            obj.annId = ann.id;
+            this.fabric.add(obj);
+            ann.fabricObject = obj;
+            this.fabric.setActiveObject(obj);
+            this.fabric.renderAll();
+            this._updateStatusBar();
+        }
+        return obj;
+    }
+
+    /**
+     * 移除标注
+     */
+    removeAnnotation(annId) {
+        const obj = this.fabric.getObjects().find(o => o.annId === annId);
+        if (obj) {
+            this.fabric.remove(obj);
+            this.fabric.renderAll();
+            this._updateStatusBar();
+        }
+    }
+
+    /**
+     * 更新标注在Canvas上的样式（类型切换时）
+     */
+    updateAnnotationStyle(ann) {
+        const oldObj = this.fabric.getObjects().find(o => o.annId === ann.id);
+        if (!oldObj) return;
+        
+        const scale = this.zoom;
+        const sx1 = ann.startX * scale + 10;
+        const sy1 = ann.startY * scale + 10;
+        const sx2 = ann.endX * scale + 10;
+        const sy2 = ann.endY * scale + 10;
+
+        let newObj = null;
+        switch (ann.type) {
+            case 'wavy': newObj = WavyLine.create(sx1, sy1, sx2, sy2); break;
+            case 'line': newObj = StraightLine.create(sx1, sy1, sx2, sy2); break;
+            case 'star': newObj = StarAnnotation.create(sx1, sy1); break;
+        }
+
+        if (newObj) {
+            newObj.annId = ann.id;
+            const idx = this.fabric.getObjects().indexOf(oldObj);
+            this.fabric.remove(oldObj);
+            this.fabric.insertAt(idx, newObj);
+            ann.fabricObject = newObj;
+            this.fabric.setActiveObject(newObj);
+            this.fabric.renderAll();
+        }
+    }
+
+    /**
+     * 选中Canvas上的标注对象
+     */
+    selectAnnotation(annId) {
+        const obj = this.fabric.getObjects().find(o => o.annId === annId);
+        if (obj) {
+            this.fabric.setActiveObject(obj);
+            this.fabric.renderAll();
+        }
+    }
+
+    /**
+     * 取消所有选中
+     */
+    deselectAll() {
+        this.fabric.discardActiveObject();
+        this.fabric.renderAll();
+    }
+
+    /**
+     * 根据Canvas坐标反算原图坐标
+     */
+    canvasToImageCoords(canvasX, canvasY) {
+        return {
+            x: Math.round((canvasX - 10) / this.zoom),
+            y: Math.round((canvasY - 10) / this.zoom),
+        };
+    }
+
+    /**
+     * 导出带标注的图片 (Data URL)
+     */
+    exportImage(format = 'png') {
+        return this.fabric.toDataURL({
+            format: format,
+            quality: 0.95,
+            multiplier: 1 / this.zoom,  // 按原图分辨率导出
+        });
+    }
+
+    // ── 事件绑定 ──
+
+    _bindEvents() {
+        this.fabric.on('mouse:down', (opt) => this._onMouseDown(opt));
+        this.fabric.on('mouse:move', (opt) => this._onMouseMove(opt));
+        this.fabric.on('mouse:up', (opt) => this._onMouseUp(opt));
+        this.fabric.on('selection:created', (opt) => this._onObjectSelected(opt));
+        this.fabric.on('selection:updated', (opt) => this._onObjectSelected(opt));
+        this.fabric.on('selection:cleared', () => this._onSelectionCleared());
+        this.fabric.on('object:modified', (opt) => this._onObjectModified(opt));
+        this.fabric.on('mouse:dblclick', (opt) => this._onDoubleClick(opt));
+
+        // 键盘快捷键
+        document.addEventListener('keydown', (e) => this._onKeyDown(e));
+
+        // 鼠标滚轮缩放
+        this.canvasEl.addEventListener('wheel', (e) => {
+            if (e.ctrlKey || e.metaKey) {
+                e.preventDefault();
+                const delta = e.deltaY > 0 ? 0.9 : 1.1;
+                this.zoomCanvas(delta);
+            }
+        }, { passive: false });
+
+        // 窗口大小变化
+        window.addEventListener('resize', () => this._onResize());
+
+        // 更新坐标状态栏
+        this.canvasEl.addEventListener('mousemove', (e) => {
+            const rect = this.canvasEl.getBoundingClientRect();
+            const imgCoords = this.canvasToImageCoords(e.clientX - rect.left, e.clientY - rect.top);
+            document.getElementById('statusCoords').textContent = 
+                `坐标: (${imgCoords.x}, ${imgCoords.y})`;
+        });
+    }
+
+    _onMouseDown(opt) {
+        if (currentTool === 'select') return;
+
+        const pointer = this.fabric.getPointer(opt.e);
+        this.isDrawing = true;
+        this.drawStartX = pointer.x;
+        this.drawStartY = pointer.y;
+    }
+
+    _onMouseMove(opt) {
+        if (!this.isDrawing) return;
+
+        const pointer = this.fabric.getPointer(opt.e);
+        
+        // 移除旧预览
+        if (this.drawPreview) {
+            this.fabric.remove(this.drawPreview);
+        }
+
+        // 绘制虚线预览
+        const dashPattern = [6, 4];
+        switch (currentTool) {
+            case 'wavy':
+                this.drawPreview = new fabric.Line(
+                    [this.drawStartX, this.drawStartY, pointer.x, pointer.y],
+                    { stroke: '#10B981', strokeWidth: 2, strokeDashArray: dashPattern, selectable: false, evented: false }
+                );
+                break;
+            case 'line':
+                this.drawPreview = new fabric.Line(
+                    [this.drawStartX, this.drawStartY, pointer.x, pointer.y],
+                    { stroke: '#EF4444', strokeWidth: 2, strokeDashArray: dashPattern, selectable: false, evented: false }
+                );
+                break;
+            case 'star':
+                this.drawPreview = new fabric.Circle({
+                    left: pointer.x - 10, top: pointer.y - 10,
+                    radius: 10, fill: 'rgba(245,158,11,0.3)',
+                    stroke: '#F59E0B', strokeWidth: 2, strokeDashArray: dashPattern,
+                    selectable: false, evented: false,
+                });
+                break;
+        }
+
+        if (this.drawPreview) {
+            this.fabric.add(this.drawPreview);
+            this.fabric.renderAll();
+        }
+    }
+
+    _onMouseUp(opt) {
+        if (!this.isDrawing) return;
+        this.isDrawing = false;
+
+        // 移除预览
+        if (this.drawPreview) {
+            this.fabric.remove(this.drawPreview);
+            this.drawPreview = null;
+        }
+
+        const pointer = this.fabric.getPointer(opt.e);
+        const dx = pointer.x - this.drawStartX;
+        const dy = pointer.y - this.drawStartY;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+
+        // 最小距离阈值（防止误点）
+        if (currentTool === 'star' ? dist < 5 : dist < 15) {
+            this.fabric.renderAll();
+            return;
+        }
+
+        // 反算原图坐标
+        const startImg = this.canvasToImageCoords(this.drawStartX, this.drawStartY);
+        const endImg = this.canvasToImageCoords(pointer.x, pointer.y);
+
+        // 创建标注
+        const ann = {
+            type: currentTool,
+            startX: startImg.x,
+            startY: startImg.y,
+            endX: currentTool === 'star' ? startImg.x : endImg.x,
+            endY: currentTool === 'star' ? startImg.y : endImg.y,
+            source: 'teacher',
+            comment: '',
+        };
+
+        const created = window.annotationStore.add(ann);
+        this.addAnnotation(created);
+
+        // 记录撤销
+        window.undoManager.execute({
+            type: 'add',
+            annotationId: created.id,
+            execute: () => {},
+            undo: () => {
+                window.annotationStore.remove(created.id);
+                this.removeAnnotation(created.id);
+            },
+        });
+    }
+
+    _onObjectSelected(opt) {
+        const obj = opt.selected?.[0];
+        if (obj && obj.annId) {
+            // 显示发光效果
+            this._setGlow(obj, true);
+            window.annotationStore.select(obj.annId);
+        }
+    }
+
+    _onSelectionCleared() {
+        // 清除所有发光
+        this.fabric.getObjects().forEach(obj => {
+            if (obj.annotationType) this._setGlow(obj, false);
+        });
+        window.annotationStore.deselect();
+    }
+
+    /** 设置发光效果 */
+    _setGlow(group, active) {
+        const glowObj = group._glowPath || group._glowLine || group._glowPoly;
+        if (glowObj) {
+            glowObj.set({ visible: active });
+        }
+        if (active) {
+            group.set({ borderColor: '#4a90d9', borderScaleFactor: 1.2 });
+        } else {
+            const colors = { wavy: '#10B981', line: '#EF4444', star: '#F59E0B' };
+            group.set({ borderColor: colors[group.annotationType] || '#333', borderScaleFactor: 1 });
+        }
+        this.fabric.renderAll();
+    }
+
+    _onObjectModified(opt) {
+        const obj = opt.target;
+        if (!obj || !obj.annId) return;
+
+        const ann = window.annotationStore.getById(obj.annId);
+        if (!ann) return;
+
+        // 获取新位置（通过 getBoundingRect）
+        const bounds = obj.getBoundingRect();
+        const imgCoords1 = this.canvasToImageCoords(bounds.left, bounds.top);
+        const imgCoords2 = this.canvasToImageCoords(bounds.left + bounds.width, bounds.top + bounds.height);
+
+        const oldData = {
+            startX: ann.startX, startY: ann.startY,
+            endX: ann.endX, endY: ann.endY,
+        };
+
+        // 更新标注数据
+        if (ann.type === 'star') {
+            window.annotationStore.update(obj.annId, {
+                startX: imgCoords1.x, startY: imgCoords1.y,
+                endX: imgCoords1.x, endY: imgCoords1.y,
+            });
+        } else {
+            window.annotationStore.update(obj.annId, {
+                startX: imgCoords1.x, startY: imgCoords1.y,
+                endX: imgCoords2.x, endY: imgCoords2.y,
+            });
+        }
+
+        // 撤销记录
+        window.undoManager.execute({
+            type: 'move',
+            annotationId: obj.annId,
+            previousState: oldData,
+            newState: { startX: ann.startX, startY: ann.startY, endX: ann.endX, endY: ann.endY },
+            execute: () => {},
+            undo: () => {
+                window.annotationStore.update(obj.annId, oldData);
+                // 重新渲染位置
+                const a = window.annotationStore.getById(obj.annId);
+                if (a) window.canvasManager.updateAnnotationStyle(a);
+            },
+        });
+    }
+
+    _onDoubleClick(opt) {
+        const target = opt.target;
+        if (target && target.annId) {
+            // 显示上下文菜单
+            const menu = document.getElementById('contextMenu');
+            menu.style.display = 'block';
+            menu.style.left = opt.e.clientX + 'px';
+            menu.style.top = opt.e.clientY + 'px';
+            menu._annId = target.annId;
+            
+            setTimeout(() => {
+                const hideMenu = () => {
+                    menu.style.display = 'none';
+                    document.removeEventListener('click', hideMenu);
+                };
+                document.addEventListener('click', hideMenu);
+            }, 0);
+        }
+    }
+
+    _onKeyDown(e) {
+        // 快捷键（不在输入框内）
+        if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return;
+
+        switch (e.key) {
+            case 'Delete':
+            case 'Backspace':
+                e.preventDefault();
+                deleteSelected();
+                break;
+            case 'Escape':
+                setTool('select');
+                break;
+            case 'w':
+            case 'W':
+                setTool('wavy');
+                break;
+            case 'l':
+            case 'L':
+                setTool('line');
+                break;
+            case 's':
+            case 'S':
+                setTool('star');
+                break;
+            case 'v':
+            case 'V':
+                setTool('select');
+                break;
+            case 'z':
+                if (e.ctrlKey || e.metaKey) {
+                    e.preventDefault();
+                    if (e.shiftKey) {
+                        redo();
+                    } else {
+                        undo();
+                    }
+                }
+                break;
+            case 'y':
+                if (e.ctrlKey || e.metaKey) {
+                    e.preventDefault();
+                    redo();
+                }
+                break;
+        }
+    }
+
+    _onResize() {
+        if (!this.fabric) return;
+        const area = document.getElementById('canvasArea');
+        this.fabric.setWidth(area.clientWidth);
+        this.fabric.setHeight(area.clientHeight);
+        this.fabric.renderAll();
+    }
+
+    /** 缩放画布 */
+    zoomCanvas(factor) {
+        const newZoom = this.zoom * factor;
+        if (newZoom < 0.2 || newZoom > 3) return;
+        
+        const center = this.fabric.getCenter();
+        const point = new fabric.Point(center.left, center.top);
+        this.fabric.zoomToPoint(point, factor);
+        this.zoom = newZoom;
+        this._updateStatusBar();
+    }
+
+    _updateStatusBar() {
+        document.getElementById('statusZoom').textContent = Math.round(this.zoom * 100) + '%';
+        document.getElementById('statusAnns').textContent = 
+            '标注: ' + window.annotationStore.count;
+    }
+}
+
+// 全局实例
+window.canvasManager = new CanvasManager();
