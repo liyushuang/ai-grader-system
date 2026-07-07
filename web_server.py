@@ -814,6 +814,20 @@ def grade_json():
     return _do_grade(request, return_html=False)
 
 
+def _friendly_model_error(message: str) -> str:
+    text = str(message or "")
+    lower = text.lower()
+    if "model_not_found" in lower or "does not exist or you do not have access" in lower:
+        return "千问模型不可用：当前 DashScope Key 没有 qwen3.6 权限，或模型名与控制台不一致。"
+    if "authenticationerror" in lower or "unauthorized" in lower or "missing or invalid" in lower:
+        return "方舟 API Key 无效或未生效：请在火山方舟 API Key 管理中复制可用的专属 Key。"
+    if "api key" in lower and ("未配置" in text or "not configured" in lower):
+        return text
+    if len(text) > 180:
+        return text[:180] + "..."
+    return text
+
+
 @app.route("/grade_stream", methods=["POST"])
 def grade_stream():
     """流式批改 — SSE端点，实时推送批改进度和LLM输出"""
@@ -857,10 +871,12 @@ def grade_stream():
                 return
 
             for event in grader.grade_stream(grading_input):
+                if isinstance(event, dict) and event.get("type") == "error":
+                    event["message"] = _friendly_model_error(event.get("message", "批改失败"))
                 yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
 
         except Exception as e:
-            yield f"data: {json.dumps({'type': 'error', 'message': str(e)}, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps({'type': 'error', 'message': _friendly_model_error(str(e))}, ensure_ascii=False)}\n\n"
 
     return Response(
         stream_with_context(generate()),
@@ -1294,12 +1310,13 @@ def _do_grade(request, return_html=True):
         
     except Exception as e:
         import traceback
+        friendly_error = _friendly_model_error(str(e))
         if return_html:
             return render_template_string(
                 HTML_TEMPLATE,
-                error=f"{str(e)}\n\n{traceback.format_exc()}",
+                error=f"{friendly_error}\n\n{traceback.format_exc()}",
             )
-        return {"error": str(e), "traceback": traceback.format_exc()}, 500
+        return {"error": friendly_error, "traceback": traceback.format_exc()}, 500
 
 
 # ── 标注数据 API ────────────────────────────────────
