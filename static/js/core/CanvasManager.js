@@ -21,7 +21,7 @@ class CanvasManager {
         this.fabric = new fabric.Canvas(this.canvasEl, {
             width: area.clientWidth,
             height: area.clientHeight,
-            selection: true,
+            selection: false,
             preserveObjectStacking: true,
             fireRightClick: true,
             stopContextMenu: false,
@@ -71,6 +71,8 @@ class CanvasManager {
                     selectable: false,
                     evented: false,
                     hasControls: false,
+                    lockMovementX: true,
+                    lockMovementY: true,
                 });
 
                 this.fabric.setDimensions({
@@ -103,8 +105,8 @@ class CanvasManager {
             }
         });
 
-        annotations.forEach(ann => {
-            const fabricObj = this._createAnnotationObject(ann);
+        annotations.forEach((ann, index) => {
+            const fabricObj = this._createAnnotationObject(ann, index + 1);
             if (fabricObj) {
                 fabricObj.annId = ann.id;
                 this.fabric.add(fabricObj);
@@ -116,16 +118,18 @@ class CanvasManager {
         this._updateStatusBar();
     }
 
+    _getDisplayYOffset(ann) {
+        return ann && ann.type !== 'star' ? 12 : 0;
+    }
+
     /**
      * 创建单个标注的 Fabric 对象
-     * 标注的Y坐标在原始图片中已包含偏移，但Canvas缩放后偏移量也被缩放。
-     * 这里额外增加固定像素偏移，确保标注不覆盖文字。
+     * 横线/波浪线在画布显示层固定下移，避免低缩放时压住文字；星标不偏移。
      */
-    _createAnnotationObject(ann) {
+    _createAnnotationObject(ann, index = null) {
         const scale = this.zoom;
         const padding = 10;
-        // 固定像素偏移：波浪线和横线在文字底部下方额外偏移，不随缩放变化
-        const fixedYOffset = ann.type === 'wavy' ? 12 : (ann.type === 'line' ? 10 : 0);
+        const fixedYOffset = this._getDisplayYOffset(ann);
         const sx1 = ann.startX * scale + padding;
         const sy1 = ann.startY * scale + padding + fixedYOffset;
         const sx2 = ann.endX * scale + padding;
@@ -143,14 +147,51 @@ class CanvasManager {
                 obj = StarAnnotation.create(sx1, sy1);
                 break;
         }
+        if (obj && index !== null) {
+            this._attachNumberBadge(obj, sx1, sy1, index);
+        }
         return obj;
+    }
+
+    _attachNumberBadge(group, x, y, index) {
+        const radius = 10;
+        const badge = new fabric.Circle({
+            left: x - radius - 2,
+            top: y - radius - 18,
+            radius,
+            fill: '#60A5FA',
+            stroke: '#fff',
+            strokeWidth: 2,
+            selectable: false,
+            evented: false,
+            objectCaching: true,
+        });
+        const label = new fabric.Text(String(index), {
+            left: x - 2,
+            top: y - 18,
+            originX: 'center',
+            originY: 'center',
+            fill: '#fff',
+            fontSize: 12,
+            fontWeight: '700',
+            fontFamily: 'Arial, sans-serif',
+            selectable: false,
+            evented: false,
+            objectCaching: true,
+        });
+
+        group.addWithUpdate(badge);
+        group.addWithUpdate(label);
+        group._numberBadge = badge;
+        group._numberLabel = label;
     }
 
     /**
      * 添加单个标注到画布
      */
     addAnnotation(ann) {
-        const obj = this._createAnnotationObject(ann);
+        const index = window.annotationStore ? window.annotationStore.getAll().findIndex(a => a.id === ann.id) + 1 : null;
+        const obj = this._createAnnotationObject(ann, index || null);
         if (obj) {
             obj.annId = ann.id;
             this.fabric.add(obj);
@@ -169,8 +210,12 @@ class CanvasManager {
         const obj = this.fabric.getObjects().find(o => o.annId === annId);
         if (obj) {
             this.fabric.remove(obj);
-            this.fabric.renderAll();
-            this._updateStatusBar();
+            if (window.annotationStore) {
+                this.renderAnnotations(window.annotationStore.getAll());
+            } else {
+                this.fabric.renderAll();
+                this._updateStatusBar();
+            }
         }
     }
 
@@ -183,11 +228,13 @@ class CanvasManager {
         
         const scale = this.zoom;
         const sx1 = ann.startX * scale + 10;
-        const sy1 = ann.startY * scale + 10;
+        const fixedYOffset = this._getDisplayYOffset(ann);
+        const sy1 = ann.startY * scale + 10 + fixedYOffset;
         const sx2 = ann.endX * scale + 10;
-        const sy2 = ann.endY * scale + 10;
+        const sy2 = ann.endY * scale + 10 + fixedYOffset;
 
         let newObj = null;
+        const index = window.annotationStore ? window.annotationStore.getAll().findIndex(a => a.id === ann.id) + 1 : null;
         switch (ann.type) {
             case 'wavy': newObj = WavyLine.create(sx1, sy1, sx2, sy2); break;
             case 'line': newObj = StraightLine.create(sx1, sy1, sx2, sy2); break;
@@ -195,6 +242,7 @@ class CanvasManager {
         }
 
         if (newObj) {
+            if (index) this._attachNumberBadge(newObj, sx1, sy1, index);
             newObj.annId = ann.id;
             const idx = this.fabric.getObjects().indexOf(oldObj);
             this.fabric.remove(oldObj);
@@ -369,6 +417,9 @@ class CanvasManager {
 
         const created = window.annotationStore.add(ann);
         this.addAnnotation(created);
+        if (window.sidePanel && typeof window.sidePanel.openAnnotationEditor === 'function') {
+            window.sidePanel.openAnnotationEditor(created.id);
+        }
 
         // 记录撤销
         window.undoManager.execute({
@@ -423,8 +474,9 @@ class CanvasManager {
 
         // 获取新位置（通过 getBoundingRect）
         const bounds = obj.getBoundingRect();
-        const imgCoords1 = this.canvasToImageCoords(bounds.left, bounds.top);
-        const imgCoords2 = this.canvasToImageCoords(bounds.left + bounds.width, bounds.top + bounds.height);
+        const displayYOffset = this._getDisplayYOffset(ann);
+        const imgCoords1 = this.canvasToImageCoords(bounds.left, bounds.top - displayYOffset);
+        const imgCoords2 = this.canvasToImageCoords(bounds.left + bounds.width, bounds.top + bounds.height - displayYOffset);
 
         const oldData = {
             startX: ann.startX, startY: ann.startY,
@@ -443,6 +495,9 @@ class CanvasManager {
                 endX: imgCoords2.x, endY: imgCoords2.y,
             });
         }
+
+        this.renderAnnotations(window.annotationStore.getAll());
+        this.selectAnnotation(obj.annId);
 
         // 撤销记录
         window.undoManager.execute({
@@ -531,8 +586,18 @@ class CanvasManager {
     _onResize() {
         if (!this.fabric) return;
         const area = document.getElementById('canvasArea');
-        this.fabric.setWidth(area.clientWidth);
-        this.fabric.setHeight(area.clientHeight);
+        const bg = this.fabric.backgroundImage;
+        if (bg) {
+            this.fabric.setDimensions({
+                width: bg.getScaledWidth() + 20,
+                height: bg.getScaledHeight() + 20,
+            });
+        } else {
+            this.fabric.setDimensions({
+                width: Math.max(320, area.clientWidth - 40),
+                height: Math.max(320, area.clientHeight - 40),
+            });
+        }
         this.fabric.renderAll();
     }
 

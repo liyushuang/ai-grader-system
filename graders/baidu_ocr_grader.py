@@ -336,11 +336,15 @@ class BaiduOCRGrader(GradingStrategy):
 
                     full_text_parts.append(words)
 
-                full_text = "".join(full_text_parts)
-                print(f"[百度OCR] 识别完成: {len(ocr_lines)}行, {len(full_text)}字符")
-                print(f"[百度OCR] 识别文本: {full_text[:200]}...")
+                filtered_lines = self._filter_body_ocr_lines(ocr_lines)
+                full_text = "".join(line.text for line in filtered_lines)
+                print(
+                    f"[百度OCR] 识别完成: {len(ocr_lines)}行, "
+                    f"正文过滤后 {len(filtered_lines)}行, {len(full_text)}字符"
+                )
+                print(f"[百度OCR] 正文文本: {full_text[:200]}...")
 
-                return ocr_lines, full_text
+                return filtered_lines, full_text
 
             except (requests.exceptions.RequestException, ParseException) as e:
                 if isinstance(e, ParseException):
@@ -358,6 +362,55 @@ class BaiduOCRGrader(GradingStrategy):
             message="百度 OCR 调用失败，已达最大重试次数",
             grader_name=self.name,
         )
+
+    def _filter_body_ocr_lines(self, ocr_lines: List[OCRLine]) -> List[OCRLine]:
+        """
+        过滤作业模板、右侧教师点评、底部图例等非学生正文内容。
+
+        目标是给规则引擎和 LLM 只喂学生译文，避免页眉与老师红字污染判断。
+        """
+        if not ocr_lines:
+            return []
+
+        noise_patterns = [
+            r"姓名[:：]?",
+            r"班级[:：]?",
+            r"日期[:：]?",
+            r"分数[:：]?",
+            r"教师点评",
+            r"老师点评",
+            r"小石潭记$",
+            r"需订正|好句|修改处",
+            r"点睛句|建议译为|可改为|更完整|更通顺",
+            r"二维码|扫码",
+        ]
+        noise_re = re.compile("|".join(noise_patterns))
+
+        max_x = max((line.bbox.x2 for line in ocr_lines), default=0)
+        first_body_idx = None
+        body_start_re = re.compile(r"(从小丘|隔[着著]?竹林|听[到见]?水声|闻水声)")
+
+        for idx, line in enumerate(ocr_lines):
+            text = re.sub(r"\s+", "", line.text)
+            if body_start_re.search(text):
+                first_body_idx = idx
+                break
+
+        candidate_lines = ocr_lines[first_body_idx:] if first_body_idx is not None else ocr_lines
+        filtered: List[OCRLine] = []
+
+        for line in candidate_lines:
+            text = re.sub(r"\s+", "", line.text)
+            if not text:
+                continue
+            if noise_re.search(text):
+                continue
+            # 右侧教师点评一般从页面最右 25% 开始，且不是学生正文。
+            if max_x and line.bbox.x1 > max_x * 0.72:
+                continue
+            filtered.append(line)
+
+        return filtered or candidate_lines
 
     # ── 坐标映射 ──────────────────────────────────────
 
@@ -600,8 +653,7 @@ class BaiduOCRGrader(GradingStrategy):
 
     def _post_process(self, result: GradingResult) -> GradingResult:
         """结果校验和调整"""
-        # 分数 clamp
-        result.total_score = max(0, min(100, result.total_score))
+        result.normalize_scores()
 
         # 错误数检查
         if result.total_errors == 0 and result.total_score < 90:

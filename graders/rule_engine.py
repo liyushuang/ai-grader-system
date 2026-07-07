@@ -115,7 +115,7 @@ _SEMANTIC_EQUIVALENTS: Dict[str, List[str]] = {
     "心乐之": [
         "心里很是快乐", "心里很高兴", "心中很是快乐",
         "心里对此很高兴", "心中为此很快乐", "心里快乐",
-        "心中很是快乐",
+        "心中很是快乐", "感到很开心", "顿时感到很开心",
     ],
     "闻": [
         "听闻", "听到", "听见", "听到了",
@@ -133,6 +133,7 @@ _SEMANTIC_EQUIVALENTS: Dict[str, List[str]] = {
     ],
     "取道": [
         "开辟出一条出小路", "开辟道路", "开出一条路",
+        "开出一条可通行的小路", "开辟出一条小路",
     ],
     "清冽": [
         "清澈", "格外清澈", "犹齐清澈",
@@ -264,6 +265,37 @@ _SEMANTIC_EQUIVALENTS: Dict[str, List[str]] = {
         "两个年轻人", "两个年青人",
     ],
 }
+
+
+_COMMON_TEACHER_RULES = [
+    {
+        "sentence_index": 0,
+        "kind": "missing_subject",
+        "required_absent": ["我", "我们", "我和我的朋友", "我和朋友"],
+        "comment_text": "补充主语：我/我们/我和我的朋友们",
+        "correct_text": "我/我们/我和我的朋友们",
+        "deduction": 2,
+    },
+    {
+        "sentence_index": 1,
+        "kind": "missing_subject",
+        "required_absent": ["我", "我们"],
+        "comment_text": "补主语：我",
+        "correct_text": "我",
+        "deduction": 2,
+    },
+]
+
+_COMMON_TEXT_ERRORS = [
+    ("人身上的佩环", "佩环", "佩环：腰间的玉佩和玉环相碰撞", 2),
+    ("藤曼", "藤蔓", "不规范字：藤", 1),
+    ("腾蔓", "藤蔓", "不规范字：藤", 1),
+    ("飘浮", "飘拂", "错字：飘拂", 1),
+    ("漂拂", "飘拂", "错字：飘拂", 1),
+    ("做尔", "俶尔", "错字：俶尔", 1),
+    ("似尔", "俶尔", "错字：俶尔", 1),
+    ("淑尔", "俶尔", "错字：俶尔", 1),
+]
 
 
 # ── 《小石潭记》标准译文（逐句拆分）───────────────────
@@ -400,10 +432,9 @@ class RuleEngine:
         text = text.replace('☰', '')
         # 去掉卷面元信息关键词
         text = re.sub(r'(豆神教育|豆伴匠|Doushen|姓名|班级|日期|教师点评|师点评|分数|小石潭记)[:：]?\s*', '', text)
-        # 去掉开头的 "数:" 或 "数：" 编号
+        # 去掉开头的 "数:" 或 "数：" 编号，但不按首字强行截断正文。
         text = re.sub(r'^数[:：]', '', text)
-        # 去掉开头非译文内容（在"从"之前的内容）
-        text = re.sub(r'^[^从小伐全青潭日其坐以同从]*', '', text)
+        text = re.sub(r'^[^\u4e00-\u9fa5]{0,12}', '', text)
 
         parts = re.split(r'[。\n]', text)
         result = []
@@ -469,7 +500,7 @@ class RuleEngine:
         unmatched = [student_sentences[i] for i in range(len(student_sentences)) if i not in matched_stu]
         return matched, unmatched
 
-    def detect_errors(self, student_text: str, standard_text: str, keywords: List[str]) -> List[ErrorItem]:
+    def detect_errors(self, student_text: str, standard_text: str, keywords: List[str], sentence_index: int = None) -> List[ErrorItem]:
         """
         检测一句中的翻译错误。
 
@@ -484,6 +515,9 @@ class RuleEngine:
         student_clean = _clean_text(student_text)
 
         for kw in keywords:
+            if sentence_index == 0 and kw in ("西", "小丘") and ("隔着竹林" in student_text or "隔篁竹" in student_text):
+                # OCR 经常漏掉作文首行，不把这类开头缺口直接当学生漏译。
+                continue
             rule = _KEYWORD_RULES.get(kw)
             if not rule:
                 continue
@@ -539,6 +573,8 @@ class RuleEngine:
                 has_match = core1 in student_clean or core2 in student_clean
 
             if not has_match:
+                if self._has_teacher_style_correction_for_keyword(kw, student_text):
+                    continue
                 # 漏译检测前再做一次语义等价检查（用correct文本）
                 if not is_equivalent:  # 前面已经检查过
                     errors.append(ErrorItem(
@@ -557,6 +593,45 @@ class RuleEngine:
             if key not in seen or e.deduction_points > seen[key].deduction_points:
                 seen[key] = e
         return list(seen.values())
+
+    def _has_teacher_style_correction_for_keyword(self, keyword: str, student_text: str) -> bool:
+        student_clean = _clean_text(student_text)
+        for wrong, correct, _, _ in _COMMON_TEXT_ERRORS:
+            if correct == keyword and _clean_text(wrong) in student_clean:
+                return True
+        return False
+
+    def detect_teacher_style_errors(self, sentence_index: int, student_text: str) -> List[ErrorItem]:
+        """补充老师实批中高频、规则表不易覆盖的旁批点。"""
+        errors = []
+        student_clean = _clean_text(student_text)
+
+        for rule in _COMMON_TEACHER_RULES:
+            if rule["sentence_index"] != sentence_index:
+                continue
+            if rule["kind"] == "missing_subject" and not any(_clean_text(x) in student_clean for x in rule["required_absent"]):
+                errors.append(ErrorItem(
+                    error_type=ErrorType.OMISSION,
+                    original_text=rule["correct_text"],
+                    correct_text=rule["correct_text"],
+                    reason=rule["comment_text"],
+                    deduction_points=rule["deduction"],
+                    bbox=None,
+                ))
+
+        for wrong, correct, reason, deduction in _COMMON_TEXT_ERRORS:
+            wrong_clean = _clean_text(wrong)
+            if wrong_clean and wrong_clean in student_clean:
+                errors.append(ErrorItem(
+                    error_type=ErrorType.TYPO if deduction <= 1 else ErrorType.CONTENT_ERROR,
+                    original_text=wrong,
+                    correct_text=correct,
+                    reason=reason,
+                    deduction_points=deduction,
+                    bbox=None,
+                ))
+
+        return errors
 
     def grade(self, student_full_text: str) -> List[SentenceAnalysis]:
         """
@@ -586,7 +661,10 @@ class RuleEngine:
                 ))
                 continue
 
-            errors = self.detect_errors(stu_text, std_text, std_sent["keywords"])
+            errors = self._dedupe_errors(
+                self.detect_errors(stu_text, std_text, std_sent["keywords"], i)
+                + self.detect_teacher_style_errors(i, stu_text)
+            )
 
             deductions = sum(e.deduction_points for e in errors)
             sent_score = max(0, 100 - deductions * 2)
@@ -631,6 +709,14 @@ class RuleEngine:
         analyses = self._detect_highlights(analyses)
 
         return analyses
+
+    def _dedupe_errors(self, errors: List[ErrorItem]) -> List[ErrorItem]:
+        seen = {}
+        for e in errors:
+            key = (e.reason, e.correct_text)
+            if key not in seen or e.deduction_points > seen[key].deduction_points:
+                seen[key] = e
+        return list(seen.values())
 
     def _detect_highlights(self, analyses: List[SentenceAnalysis]) -> List[SentenceAnalysis]:
         """基于规则识别点睛句，按《小石潭记批改要求》的8句必标库"""

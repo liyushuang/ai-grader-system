@@ -110,6 +110,7 @@ class SentenceAnalysis:
     is_excellent: bool = False      # 是否翻译精彩（零错误且表达好）
     is_highlight: bool = False      # 是否为点睛句（★标注）
     highlight_comment: str = ""     # 点睛句赏析说明
+    polished_translation: str = ""  # 润色后译文
     bbox: Optional[BoundingBox] = None  # 该句在图片中的区域
 
 
@@ -182,6 +183,13 @@ class Annotation:
             created_by=d.get("created_by", "ai"),
         )
 
+def _clamp_int(value, low: int, high: int) -> int:
+    try:
+        value = int(round(float(value)))
+    except (TypeError, ValueError):
+        value = low
+    return max(low, min(high, value))
+
 
 @dataclass
 class GradingResult:
@@ -191,6 +199,10 @@ class GradingResult:
     sentence_analyses: List[SentenceAnalysis] = field(default_factory=list)
     total_score: int = 0                    # 总分(0-100)
     overall_comment: str = ""               # 总体评语
+    overall_comment_general: str = ""       # 通用风格评语
+    overall_comment_encouraging: str = ""   # 加油鼓励风评语
+    overall_comment_instructive: str = ""    # 严厉指导风评语
+    polished_full_translation: str = ""     # 全文润色译文
 
     # 元信息
     confidence: Confidence = Confidence.MEDIUM
@@ -234,6 +246,20 @@ class GradingResult:
             for sa in self.sentence_analyses
             for e in sa.errors
         )
+
+    def normalize_scores(self) -> "GradingResult":
+        """Clamp all public scores to their declared ranges."""
+        self.total_score = _clamp_int(self.total_score, 0, 100)
+        for sa in self.sentence_analyses:
+            sa.sentence_score = _clamp_int(sa.sentence_score, 0, 100)
+            for err in sa.errors:
+                err.deduction_points = _clamp_int(err.deduction_points, 0, 100)
+
+        normalized = {}
+        for name, score in (self.dimension_scores or {}).items():
+            normalized[name] = _clamp_int(score, 0, 20)
+        self.dimension_scores = normalized
+        return self
 
     @property
     def has_bbox(self) -> bool:

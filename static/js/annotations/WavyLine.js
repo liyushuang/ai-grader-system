@@ -48,7 +48,7 @@ class WavyLine {
 
         const group = new fabric.Group([glowPath, path], {
             selectable: true, evented: true,
-            hasControls: false, hasBorders: true,
+            hasControls: false, hasBorders: false,
             borderColor: color, borderScaleFactor: 1,
             padding: 4, lockRotation: true, lockScalingY: true,
             ...options,

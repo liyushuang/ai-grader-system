@@ -25,7 +25,7 @@ function setTool(tool) {
         const fc = window.canvasManager.fabric;
         if (tool === 'select') {
             fc.defaultCursor = 'default';
-            fc.selection = true;
+            fc.selection = false;
             fc.getObjects().forEach(o => { if (o.annotationType) o.selectable = true; });
         } else {
             fc.defaultCursor = 'crosshair';
@@ -155,7 +155,7 @@ function cancelEdit() {
         document.getElementById('editType').value = sel.type;
         document.getElementById('editComment').value = sel.comment || '';
     }
-    showToast('已取消编辑');
+    document.getElementById('editModal')?.classList.remove('active');
 }
 
 // ═══════════════════════════════════════════════
@@ -298,7 +298,9 @@ function resetAll() {
     }
 
     setTool('select');
-    document.getElementById('editPanel').classList.remove('active');
+    document.getElementById('mainLayout')?.classList.add('empty');
+    if (window.sidePanel) window.sidePanel.clearAllViews();
+    document.getElementById('editModal')?.classList.remove('active');
 };
 
 // ═══════════════════════════════════════════════
@@ -308,14 +310,18 @@ let imageSessions = {};  // { index: { imageB64, annotations, gradingData, taskI
 let currentImageIndex = -1;
 let aiOriginalAnnotations = null;  // 当前图片的AI原始标注备份
 let llmOutputBuffer = '';  // LLM流式输出缓冲
+let gradingFailures = [];  // 批改失败原因
 
 function handleFileSelect(input) {
     if (!input.files || input.files.length === 0) return;
     
     const files = Array.from(input.files);
     const grader = document.querySelector('input[name="grader"]:checked')?.value || 'fusion';
+    gradingFailures = [];
     
     document.getElementById('uploadOverlay').classList.remove('show');
+    document.getElementById('mainLayout')?.classList.add('empty');
+    if (window.sidePanel) window.sidePanel.clearAllViews();
     // 融合批改用 thinking panel 展示进度，不需要 loading overlay
     if (grader !== 'fusion') {
         document.getElementById('loadingOverlay').classList.add('show');
@@ -363,7 +369,7 @@ function handleFileSelect(input) {
                 .then(data => {
                     completed++;
                     if (data.ok) {
-                        imageSessions[idx] = buildSession(data, file);
+                        imageSessions[idx] = buildSession(data, file, idx);
                     }
                     onAllComplete(completed, total);
                 })
@@ -422,15 +428,22 @@ async function streamGrade(file, idx, grader, onDone) {
                                     total_score: event.data.total_score,
                                     total_errors: event.data.total_errors,
                                     overall_comment: event.data.overall_comment,
+                                    overall_comment_general: event.data.overall_comment_general,
+                                    overall_comment_encouraging: event.data.overall_comment_encouraging,
+                                    overall_comment_instructive: event.data.overall_comment_instructive,
+                                    polished_full_translation: event.data.polished_full_translation,
                                     homework_completion: event.data.homework_completion,
                                     dimension_scores: event.data.dimension_scores,
+                                    dimension_analysis: event.data.dimension_analysis,
                                     strengths: event.data.strengths,
                                     weaknesses: event.data.weaknesses,
                                     suggestions: event.data.suggestions,
                                     highlight_sentences: event.data.highlight_sentences,
                                     parent_feedback: event.data.parent_feedback,
                                     system_tags: event.data.system_tags,
-                                    dimension_analysis: event.data.dimension_analysis,
+                                    sentence_analyses: event.data.sentence_analyses,
+                                    grader_name: event.data.grader_name,
+                                    processing_time_ms: event.data.processing_time_ms,
                                 },
                                 taskId: 'task_' + Date.now() + '_' + idx,
                                 fileName: file.name,
@@ -443,7 +456,9 @@ async function streamGrade(file, idx, grader, onDone) {
                         }
                         
                         if (event.type === 'error') {
-                            showToast('❌ ' + event.message);
+                            const message = event.message || '批改失败';
+                            gradingFailures.push(`${file.name}: ${message}`);
+                            showToast('❌ ' + message);
                             thinkingPanel.classList.remove('show');
                             onDone();
                         }
@@ -455,6 +470,7 @@ async function streamGrade(file, idx, grader, onDone) {
         }
     } catch (err) {
         console.error(`图片${idx+1}流式批改失败:`, err);
+        gradingFailures.push(`${file.name}: ${err.message || err}`);
         thinkingPanel.classList.remove('show');
         onDone();
     }
@@ -576,26 +592,61 @@ function loadImageAsBase64(file) {
     });
 }
 
-function buildSession(data, file) {
+function buildSession(data, file, idx) {
+    const result = data.grading_result || {};
     return {
         imageB64: data.image_b64,
         annotations: data.annotations,
         gradingData: {
-            total_score: data.grading_result.total_score,
-            total_errors: data.grading_result.total_errors,
-            overall_comment: data.grading_result.overall_comment,
-            homework_completion: data.grading_result.homework_completion,
-            dimension_scores: data.grading_result.dimension_scores,
-            strengths: data.grading_result.strengths,
-            weaknesses: data.grading_result.weaknesses,
-            suggestions: data.grading_result.suggestions,
-            highlight_sentences: data.grading_result.highlight_sentences,
-            parent_feedback: data.grading_result.parent_feedback,
-            system_tags: data.grading_result.system_tags,
+            total_score: result.total_score,
+            total_errors: result.total_errors,
+            total_deductions: result.total_deductions,
+            confidence: result.confidence,
+            overall_comment: result.overall_comment,
+            overall_comment_general: result.overall_comment_general,
+            overall_comment_encouraging: result.overall_comment_encouraging,
+            overall_comment_instructive: result.overall_comment_instructive,
+            polished_full_translation: result.polished_full_translation,
+            homework_completion: result.homework_completion,
+            dimension_scores: result.dimension_scores,
+            dimension_analysis: result.dimension_analysis,
+            strengths: result.strengths,
+            weaknesses: result.weaknesses,
+            suggestions: result.suggestions,
+            highlight_sentences: result.highlight_sentences,
+            parent_feedback: result.parent_feedback,
+            system_tags: result.system_tags,
+            sentence_analyses: result.sentence_analyses,
+            grader_name: result.grader_name,
+            processing_time_ms: result.processing_time_ms,
         },
         taskId: 'task_' + Date.now() + '_' + idx,
         fileName: file.name,
     };
+}
+
+function loadDemoSession() {
+    if (!window.__demoSession) return;
+
+    document.getElementById('uploadOverlay').classList.remove('show');
+    document.getElementById('loadingOverlay').classList.remove('show');
+    document.getElementById('thinkingPanel').classList.remove('show');
+    document.getElementById('mainLayout').classList.remove('empty');
+
+    imageSessions = {
+        0: {
+            imageB64: window.__demoSession.imageB64,
+            annotations: window.__demoSession.annotations || [],
+            gradingData: window.__demoSession.gradingData || {},
+            taskId: window.__demoSession.taskId || 'demo_style_debug',
+            fileName: window.__demoSession.fileName || '样式调试样例',
+        }
+    };
+    currentImageIndex = -1;
+    aiOriginalAnnotations = JSON.parse(JSON.stringify(imageSessions[0].annotations));
+    switchToImage(0);
+    renderImageTabs();
+    showToast('已加载样式调试样例');
 }
 
 function onAllComplete(completed, total) {
@@ -606,7 +657,10 @@ function onAllComplete(completed, total) {
         showToast(`✅ 已批改 ${completed}/${total} 张图片`);
     } else {
         document.getElementById('uploadOverlay').classList.add('show');
-        showToast('❌ 所有图片批改失败');
+        document.getElementById('mainLayout')?.classList.add('empty');
+        if (window.sidePanel) window.sidePanel.clearAllViews();
+        const reason = gradingFailures.length ? gradingFailures[0] : '所有图片批改失败';
+        showToast('❌ ' + reason);
     }
 }
 
@@ -635,6 +689,7 @@ function switchToImage(index) {
     
     currentImageIndex = index;
     const session = imageSessions[index];
+    document.getElementById('mainLayout').classList.remove('empty');
     
     // 重置状态
     window.annotationStore.annotations = [];
@@ -653,6 +708,16 @@ function switchToImage(index) {
         window.canvasManager.renderAnnotations(window.annotationStore.getAll());
         window.sidePanel.renderList(window.annotationStore.getAll());
         window.undoManager.clear();
+        
+        // 绑定 Fabric 的重绘事件以自动计算旁批位置
+        if (window.canvasManager.fabric) {
+            window.canvasManager.fabric.off('after:render');
+            window.canvasManager.fabric.on('after:render', () => {
+                if (window.sidePanel && typeof window.sidePanel.layoutSideBySideCards === 'function') {
+                    window.sidePanel.layoutSideBySideCards();
+                }
+            });
+        }
         
         // 加载批改报告
         if (session.gradingData) {
@@ -696,6 +761,7 @@ resetToAI = function() {
 /** 覆盖 resetAll */
 resetAll = function() {
     imageSessions = {};
+    gradingFailures = [];
     currentImageIndex = -1;
     aiOriginalAnnotations = null;
     window.annotationStore.annotations = [];
@@ -705,6 +771,7 @@ resetAll = function() {
     currentTool = 'select';
     
     document.getElementById('uploadOverlay').classList.add('show');
+    document.getElementById('mainLayout').classList.add('empty');
     document.getElementById('imageTabs').style.display = 'none';
     document.getElementById('imageTabs').innerHTML = '';
     
@@ -715,7 +782,8 @@ resetAll = function() {
     }
     
     setTool('select');
-    document.getElementById('editPanel').classList.remove('active');
+    if (window.sidePanel) window.sidePanel.clearAllViews();
+    document.getElementById('editModal').classList.remove('active');
 };
 
 // ═══════════════════════════════════════════════
@@ -746,6 +814,7 @@ document.addEventListener('DOMContentLoaded', () => {
     
     // 初始化侧边面板
     if (window.sidePanel) window.sidePanel.init();
+    loadDemoSession();
     
     // 默认选中融合批改
     const fusionRadio = document.getElementById('graderFusion');

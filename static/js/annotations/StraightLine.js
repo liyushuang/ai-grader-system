@@ -33,7 +33,7 @@ class StraightLine {
 
         const group = new fabric.Group([glowLine, line, leftDot, rightDot], {
             selectable: true, evented: true,
-            hasControls: false, hasBorders: true,
+            hasControls: false, hasBorders: false,
             borderColor: lineColor, borderScaleFactor: 1,
             padding: 3, lockRotation: true, lockScalingY: true,
             ...options,

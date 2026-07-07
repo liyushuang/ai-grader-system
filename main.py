@@ -59,16 +59,12 @@ def get_grader(name: str):
         baidu_key = os.environ.get("BAIDU_API_KEY", "")
         baidu_secret = os.environ.get("BAIDU_SECRET_KEY", "")
         volcano_key = os.environ.get("VOLCANO_API_KEY", "")
-        # 自动检测 LLM provider
-        llm_provider = "qwen"
-        if volcano_key and not dashscope_key:
-            llm_provider = "volcano"
         return FusionGrader(
             dashscope_api_key=dashscope_key,
             baidu_api_key=baidu_key,
             baidu_secret_key=baidu_secret,
             volcano_api_key=volcano_key,
-            llm_provider=llm_provider,
+            llm_provider="qwen",
         )
     
     elif name_lower in ("volcano", "火山", "ark", "doubao", "豆包"):
@@ -153,9 +149,14 @@ def run_grading(image_path: str, grader_name: str, output_path: str = None):
             "status": result.status.value,
             "processing_time_ms": result.processing_time_ms,
             "overall_comment": result.overall_comment,
+            "overall_comment_general": result.overall_comment_general,
+            "overall_comment_encouraging": result.overall_comment_encouraging,
+            "overall_comment_instructive": result.overall_comment_instructive,
+            "polished_full_translation": result.polished_full_translation,
             "recognized_text": result.recognized_text,
             "homework_completion": result.homework_completion,
             "dimension_scores": result.dimension_scores,
+            "dimension_analysis": result.dimension_analysis,
             "strengths": result.strengths,
             "weaknesses": result.weaknesses,
             "suggestions": result.suggestions,
@@ -167,6 +168,7 @@ def run_grading(image_path: str, grader_name: str, output_path: str = None):
                     "original_classical": sa.original_classical,
                     "student_translation": sa.student_translation,
                     "standard_translation": sa.standard_translation,
+                    "polished_translation": sa.polished_translation,
                     "sentence_score": sa.sentence_score,
                     "is_excellent": sa.is_excellent,
                     "is_highlight": sa.is_highlight,

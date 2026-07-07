@@ -1,5 +1,7 @@
 __pycache__/
 *.pyc
+.venv/
+.DS_Store
 output/uploads/
 output/graded_*
 .env

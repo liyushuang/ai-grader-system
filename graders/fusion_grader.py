@@ -51,7 +51,7 @@ class FusionGrader(GradingStrategy):
         llm_provider: str = "qwen",
         model: str = None,
         temperature: float = 0.1,
-        max_tokens: int = 4096,
+        max_tokens: int = 8192,
     ):
         self.dashscope_api_key = dashscope_api_key or os.environ.get("DASHSCOPE_API_KEY", "")
         self.baidu_api_key = baidu_api_key or os.environ.get("BAIDU_API_KEY", "")
@@ -61,9 +61,9 @@ class FusionGrader(GradingStrategy):
         self.temperature = temperature
         self.max_tokens = max_tokens
         if self.llm_provider == "volcano":
-            self.model = model or "doubao-1-5-vision-pro-32k-250115"
+            self.model = model or os.environ.get("VOLCANO_MODEL", "doubao-seed-2-1-pro-260628")
         else:
-            self.model = model or "qwen-max"
+            self.model = model or "qwen-vl-max"
 
     @property
     def name(self) -> str:
@@ -169,15 +169,15 @@ class FusionGrader(GradingStrategy):
             # ── Phase 3: 构建预处理摘要 ──
             pre_judgment = self._build_pre_judgment(sentence_analyses)
 
-            # ── Phase 4: Qwen-VL-Max终判（流式）──
+            # ── Phase 4: LLM终判（流式）──
             yield {"type": "stage", "stage": "llm", "message": "🧠 AI 正在分析..."}
-            system_prompt = self._build_fusion_system_prompt(
+            system_prompt = self._build_llm_system_prompt(
                 grading_input, full_text, pre_judgment
             )
 
             # 流式调用 LLM
             llm_buffer = ""
-            for chunk in self._run_llm_stream(grading_input, system_prompt):
+            for chunk in self._run_llm_stream(grading_input, system_prompt, full_text, pre_judgment):
                 if chunk:
                     llm_buffer += chunk
                     yield {"type": "llm_chunk", "text": chunk}
@@ -190,6 +190,7 @@ class FusionGrader(GradingStrategy):
                 from qwen_vl_max_grader import QwenVLMaxGrader
                 llm = QwenVLMaxGrader(api_key=self.dashscope_api_key)
             llm_result = llm._parse_response(llm_buffer, grading_input)
+            llm_result = llm._post_process(llm_result)
             yield {"type": "stage", "stage": "llm_done",
                    "message": f"✅ AI 分析完成：{llm_result.total_score}分，"
                              f"{llm_result.total_errors} 处错误"}
@@ -214,6 +215,10 @@ class FusionGrader(GradingStrategy):
                 "total_score": result.total_score,
                 "total_errors": result.total_errors,
                 "overall_comment": result.overall_comment,
+                "overall_comment_general": result.overall_comment_general,
+                "overall_comment_encouraging": result.overall_comment_encouraging,
+                "overall_comment_instructive": result.overall_comment_instructive,
+                "polished_full_translation": result.polished_full_translation,
                 "homework_completion": result.homework_completion,
                 "dimension_scores": result.dimension_scores,
                 "dimension_analysis": getattr(result, 'dimension_analysis', {}),
@@ -226,6 +231,30 @@ class FusionGrader(GradingStrategy):
                 "grader_name": result.grader_name,
                 "processing_time_ms": result.processing_time_ms,
                 "annotations": annotations_to_dict_list(annotations),
+                "sentence_analyses": [
+                    {
+                        "original_classical": sa.original_classical,
+                        "student_translation": sa.student_translation,
+                        "standard_translation": sa.standard_translation,
+                        "polished_translation": sa.polished_translation,
+                        "sentence_score": sa.sentence_score,
+                        "is_excellent": sa.is_excellent,
+                        "is_highlight": sa.is_highlight,
+                        "highlight_comment": sa.highlight_comment,
+                        "errors": [
+                            {
+                                "error_type": e.error_type.value,
+                                "original_text": e.original_text,
+                                "correct_text": e.correct_text,
+                                "reason": e.reason,
+                                "deduction_points": e.deduction_points,
+                                "bbox": e.bbox.to_list() if e.bbox else None,
+                            }
+                            for e in sa.errors
+                        ],
+                    }
+                    for sa in result.sentence_analyses
+                ],
             }}
 
         except Exception as e:
@@ -348,10 +377,32 @@ class FusionGrader(GradingStrategy):
 ## 逐句精确参照（必须逐句严格对照）
 {sentence_pairs}
 
-## 百度OCR识别文本（参考，以图片实际内容为准）
+## 百度OCR识别文本（最终模型只依据此文本，不再读取图片）
 {ocr_text}
 
 {pre_judgment}
+
+## 老师批改风格硬约束（优先级最高）
+- 批改对象是《小石潭记》文言文翻译，不是作文赏析。优先检查“字词是否对应原文、句式是否补全、错别字是否影响理解”。
+- 先纠错，再表扬：问题标注优先级高于点睛句/优秀句；不要为了页面好看而多标优秀句。
+- 全部标注总数控制在 6-10 条以内；问题句/错字/漏译可标4-6条，优秀句最多1条，点睛句最多2条。
+- 纠错必须具体到词或短语，不允许把整句、整段作为 original_text。
+- reason 只写1句短理由，便于旁批展示；不要长篇解释。
+- highlight_comment 必须是 12-25 字短旁批，例如“点睛句：发现小潭，心乐之译得准”。
+- is_excellent 只给真正值得画波浪线的句子；普通正确句不要标为精彩。
+- is_highlight 只给文章关键画面或情感转折句；普通完整翻译不要标为点睛句。
+- 绝对禁止凭空编造 OCR 文本里没有的文字或问题；OCR 不确定时宁可不标，不要生成“雪白的曝光”等无关内容。
+
+## 老师实批参考口径（必须贴近）
+- 老师会重点标：缺主语（如开头需补“我/我们/我和朋友们”）、错别字/不规范字、重点字词误译、特殊句式未处理。
+- 常见老师旁批写法：
+  - “补充主语：我/我们/我和我的朋友们”
+  - “佩环：腰间的玉佩和玉环相碰撞”
+  - “补主语：我”
+  - “点睛句：全石以为底，近岸，卷石底以出，为坻、为屿、为嵁、为岩。”
+  - “重点句理解非常好！”
+  - “不规范字：藤”“错字：飘拂”“错字：俶尔”
+- 对“全石以为底，近岸，卷石底以出，为坻，为屿，为嵁，为岩”这类重点句，若学生大意正确，应优先给点睛/表扬，不要误判为普通表达问题。
 
 ## 一、重点字词批改要求（必须逐字检查）
 
@@ -406,7 +457,7 @@ class FusionGrader(GradingStrategy):
 - 原文省略主语，学生翻译时没有补出，导致现代汉语不完整
 - 常见："下见小潭"应补"我向下看见"、"潭西南而望"应补"向小石潭的西南方望去"、"坐潭上"应补"我坐在小石潭边"
 
-## 三、点睛句库（每次批改至少选3句标注）
+## 三、点睛句库（最多选3句标注）
 
 1. "从小丘西行百二十步，隔篁竹，闻水声，如鸣珮环，心乐之" — 发现小潭与情感起点
 2. "全石以为底，近岸，卷石底以出，为坻，为屿，为嵁，为岩" — 石底奇观
@@ -420,18 +471,19 @@ class FusionGrader(GradingStrategy):
 ## 四、标注规则（严格控制数量，避免过度拥挤）
 
 ### 标注类型
-- is_excellent=true：翻译准确流畅、用词精彩的句子 → 波浪线标注（至少2处，最多4处）
-- errors非空：有翻译错误的句子 → 横线标注（重点标2-5处，必须具体到错误词）
+- is_excellent=true：翻译准确流畅、用词精彩的句子 → 波浪线标注（最多2处）
+- errors非空：有翻译错误的句子 → 横线标注（重点标1-2处，必须具体到错误词）
   - error_type 必须用：实词错误/虚词错误/漏译/多译/错别字/语序不当/主语缺失/扩写过度
   - original_text 必须写具体的错误原文（如"砍倒"不是整句）
   - correct_text 必须写正确翻译
   - reason 必须写清楚错误原因（如"'可'应译为'大约'，学生译成'可以'属于古今异义错误"）
-- is_highlight=true：点睛句 → 星星标注（至少3句）
+- is_highlight=true：点睛句 → 星星标注（最多2句）
 
 ### 标注数量控制
-- 波浪线优秀句：至少2处
-- 横线问题句：2-5处，重点标影响得分的重点词误译
-- 点睛句：至少3句
+- 横线问题句：3-6处，优先标缺主语、错字、重点词误译、特殊句式
+- 波浪线优秀句：0-1处，宁缺毋滥
+- 点睛句：0-2句，只选关键画面或情感转折句
+- 总标注数：最多10条
 - 总评：1段
 - 建议：1-3条
 
@@ -478,7 +530,14 @@ class FusionGrader(GradingStrategy):
       "original_classical": "原文",
       "student_translation": "翻译",
       "standard_translation": "标准译文",
-      "errors": [{{"error_type":"实词错误","original_text":"错误原文（必须具体到词，不能写整句）","correct_text":"正确翻译","reason":"错误说明（必须指出具体错误类型，如古今异义/词类活用/漏译等）","deduction_points":3}}],
+      "polished_translation": "结合原文，将学生译文润色修改为更通顺优雅、符合现代汉语规范的优秀译文",
+      "errors": [{{
+        "error_type": "实词错误|虚词错误|漏译|多译|错别字|语序错误|标点错误",
+        "original_text": "错误原文（必须具体到词，不能写整句）",
+        "correct_text": "正确翻译",
+        "reason": "判定理由（必须指出具体错误类型，如古今异义/词类活用/漏译等）",
+        "deduction_points": 3
+      }}],
       "sentence_score": N,
       "is_excellent": false,
       "is_highlight": false,
@@ -486,13 +545,19 @@ class FusionGrader(GradingStrategy):
     }}
   ],
   "total_score": N,
-  "overall_comment": "100-150字总评，先肯定优点再指出问题，必须具体",
+  "overall_comment": "通用风格总评，100-150字，肯定优点并指出主要问题",
+  "overall_comment_general": "通用风格总评，100-150字，与overall_comment一致，先肯定优点再指出主要问题",
+  "overall_comment_encouraging": "加油鼓励风总评，100-150字，以激励、表扬为主，鼓励小学生保持对文言文的热情",
+  "overall_comment_instructive": "严厉指导风总评，100-150字，严谨指出翻译缺陷和不达标的地方，并给出明确规范和提高要求",
+  "polished_full_translation": "全文润色译文（将整篇学生翻译整理并统一润色后的连贯通顺译文）",
   "dimension_scores": {{"完整度":N,"准确度":N,"重点词掌握":N,"句式处理":N,"表达流畅度":N,"忠实原文":N}},
   "dimension_analysis": {{"完整度":{{"strength":"...","weakness":"..."}},"准确度":{{"strength":"...","weakness":"..."}},"重点词掌握":{{"strength":"...","weakness":"..."}},"句式处理":{{"strength":"...","weakness":"..."}},"表达流畅度":{{"strength":"...","weakness":"..."}},"忠实原文":{{"strength":"...","weakness":"..."}}}},
   "homework_completion": "描述翻译了哪些句子，是否完成全文",
   "strengths": ["具体优点"], "weaknesses": ["具体问题"], "suggestions": ["可操作建议"],
-  "highlight_sentences": ["点睛句原文"],
-  "parent_feedback": "家长反馈50-80字，说明批改符号含义", "system_tags": ["标签"],
+  "highlight_sentences": [
+    {{"classical": "原文点睛句", "translation": "学生译文", "comment": "赏析"}}
+  ],
+  "parent_feedback": "家长反馈50-80字，说明批改符号含义并给出正向引导", "system_tags": ["标签"],
   "confidence": "高"
 }}"""
 
@@ -501,7 +566,8 @@ class FusionGrader(GradingStrategy):
     def _run_llm_final(self, inp: GradingInput, ocr_text: str,
                        pre_judgment: str) -> GradingResult:
         """调用 LLM 进行终判（支持 Qwen 和 Volcano）"""
-        system_prompt = self._build_fusion_system_prompt(inp, ocr_text, pre_judgment)
+        system_prompt = self._build_llm_system_prompt(inp, ocr_text, pre_judgment)
+        user_content = self._build_text_only_user_content(inp, ocr_text, pre_judgment)
 
         if self.llm_provider == "volcano":
             from volcano_grader import VolcanoGrader
@@ -511,7 +577,11 @@ class FusionGrader(GradingStrategy):
                 temperature=self.temperature,
                 max_tokens=self.max_tokens,
             )
-            return volcano._call_api(inp, system_prompt)
+            raw_response, token_usage = volcano._call_api(system_prompt, user_content)
+            result = volcano._parse_response(raw_response, inp)
+            result = volcano._post_process(result)
+            result.token_usage = token_usage
+            return result
         else:
             from qwen_vl_max_grader import QwenVLMaxGrader
             qwen = QwenVLMaxGrader(
@@ -520,10 +590,30 @@ class FusionGrader(GradingStrategy):
                 temperature=self.temperature,
                 max_tokens=self.max_tokens,
             )
-            return qwen._call_api(inp, system_prompt)
+            raw_response, token_usage = qwen._call_api(system_prompt, user_content)
+            result = qwen._parse_response(raw_response, inp)
+            result = qwen._post_process(result)
+            result.token_usage = token_usage
+            return result
 
-    def _run_llm_stream(self, inp: GradingInput, system_prompt: str):
+    def _build_text_only_user_content(self, inp: GradingInput, ocr_text: str,
+                                      pre_judgment: str) -> list:
+        return [{
+            "type": "text",
+            "text": (
+                f"请批改《{inp.textbook_name}》文言文翻译作业。\n\n"
+                f"【百度OCR识别到的学生译文】\n{ocr_text}\n\n"
+                f"【规则引擎初判】\n{pre_judgment}\n\n"
+                "只依据以上 OCR 文本和标准答案进行语义批改；不要假设图片里还有额外内容。"
+                "请严格按系统提示返回 JSON。"
+            )
+        }]
+
+    def _run_llm_stream(self, inp: GradingInput, system_prompt: str,
+                        ocr_text: str, pre_judgment: str):
         """流式调用 LLM，逐 token 返回纯文本字符串（支持 Qwen 和 Volcano）"""
+        user_content = self._build_text_only_user_content(inp, ocr_text, pre_judgment)
+
         if self.llm_provider == "volcano":
             from volcano_grader import VolcanoGrader
             volcano = VolcanoGrader(
@@ -532,20 +622,6 @@ class FusionGrader(GradingStrategy):
                 temperature=self.temperature,
                 max_tokens=self.max_tokens,
             )
-            image_b64, _ = volcano._load_and_encode_image(inp)
-            user_content = [
-                {
-                    "type": "text",
-                    "text": f"请批改以下学生提交的《{inp.textbook_name}》文言文翻译作业。仔细识别图片中的手写文字，与标准译文逐句对照，找出所有错误并标注位置。"
-                },
-                {
-                    "type": "image_url",
-                    "image_url": {
-                        "url": f"data:image/jpeg;base64,{image_b64}",
-                        "detail": "high"
-                    }
-                }
-            ]
             for event in volcano._call_api_stream(system_prompt, user_content):
                 if event.get("type") == "llm_chunk":
                     yield event["text"]
@@ -559,26 +635,76 @@ class FusionGrader(GradingStrategy):
                 temperature=self.temperature,
                 max_tokens=self.max_tokens,
             )
-            image_b64, _ = qwen._load_and_encode_image(inp)
-            user_content = [
-                {
-                    "type": "text",
-                    "text": f"请批改以下学生提交的《{inp.textbook_name}》文言文翻译作业。仔细识别图片中的手写文字，与标准译文逐句对照，找出所有错误并标注位置。"
-                },
-                {
-                    "type": "image_url",
-                    "image_url": {
-                        "url": f"data:image/jpeg;base64,{image_b64}",
-                        "detail": "high"
-                    }
-                }
-            ]
             for event in qwen._call_api_stream(system_prompt, user_content):
                 if event.get("type") == "llm_chunk":
                     yield event["text"]
                 elif event.get("type") == "llm_error":
                     raise Exception(event.get("message", "LLM API 调用失败"))
             # llm_done、llm_retry 等事件忽略，由外部根据 buffer 判断完成
+
+    def _build_llm_system_prompt(self, inp: GradingInput, ocr_text: str,
+                                 pre_judgment: str) -> str:
+        if self.llm_provider == "volcano":
+            return self._build_volcano_light_system_prompt(inp, ocr_text, pre_judgment)
+        return self._build_fusion_system_prompt(inp, ocr_text, pre_judgment)
+
+    def _build_volcano_light_system_prompt(self, inp: GradingInput, ocr_text: str,
+                                           pre_judgment: str) -> str:
+        from qwen_vl_max_grader import QwenVLMaxGrader
+        sentence_pairs = QwenVLMaxGrader._default_sentence_pairs()
+        return f"""你是语文老师，批改《{inp.textbook_name}》文言文翻译。不要展开推理，直接输出 JSON。
+
+【标准原文和译文】
+{sentence_pairs}
+
+【批改原则】
+1. 只依据用户提供的 OCR 学生译文批改。
+2. 只标最关键问题，errors 最多2处；优秀句最多2处；点睛句最多2处。
+3. 错误必须具体到词或短语，reason 不超过25字。
+4. 不要把未翻译的后半篇逐句展开，只在总评中说明“后半部分未完成”。
+5. 输出必须是纯 JSON，不能输出解释、思考过程或 markdown。
+
+【只输出这个结构】
+{{
+  "recognized_text": "OCR学生译文",
+  "sentence_analysis": [
+    {{
+      "original_classical": "对应原文",
+      "student_translation": "学生译文片段",
+      "standard_translation": "标准译文",
+      "polished_translation": "简短润色译文",
+      "errors": [
+        {{
+          "error_type": "实词错误|漏译|错别字|表达不准",
+          "original_text": "错误词",
+          "correct_text": "正确译法",
+          "reason": "短理由",
+          "deduction_points": 2
+        }}
+      ],
+      "sentence_score": 85,
+      "is_excellent": false,
+      "is_highlight": false,
+      "highlight_comment": ""
+    }}
+  ],
+  "total_score": 80,
+  "overall_comment": "80字内总评",
+  "overall_comment_general": "80字内总评",
+  "overall_comment_encouraging": "60字内鼓励",
+  "overall_comment_instructive": "60字内建议",
+  "polished_full_translation": "简短润色译文",
+  "dimension_scores": {{"完整度":15,"准确度":15,"重点词掌握":15,"句式处理":15,"表达流畅度":15,"忠实原文":15}},
+  "dimension_analysis": {{}},
+  "homework_completion": "完成情况",
+  "strengths": ["优点1"],
+  "weaknesses": ["问题1"],
+  "suggestions": ["建议1"],
+  "highlight_sentences": [],
+  "parent_feedback": "50字内家长反馈",
+  "system_tags": ["文言文翻译"],
+  "confidence": "高"
+}}"""
 
     # ── Phase 5: 融合结果 ─────────────────────────
 
@@ -678,6 +804,7 @@ class FusionGrader(GradingStrategy):
 
         llm_result.grader_name = self.name
         llm_result.processing_time_ms = int((time.time() - start_time) * 1000)
+        llm_result.normalize_scores()
         return llm_result
 
     def _find_error_in_ocr_lines(self, err_text: str, ocr_lines: list,

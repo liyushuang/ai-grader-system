@@ -7,13 +7,13 @@
 3. is_highlight=True + bbox存在 → 星星标注（句子左上角，偏上15px偏左15px，小星星不遮挡）
 """
 
-from typing import List
+from typing import List, Tuple
 import sys
 sys.path.insert(0, '/workspace/poc_grader')
 
 from grader_base import (
     GradingResult, Annotation, AnnotationType, AnnotationSource,
-    SentenceAnalysis, ErrorItem,
+    SentenceAnalysis, ErrorItem, ErrorType,
 )
 
 
@@ -21,80 +21,161 @@ def generate_annotations_from_result(result: GradingResult) -> List[Annotation]:
     """
     从批改结果自动生成初始标注列表。
 
-    遍历所有句子分析，根据标记生成对应类型的符号标注。
+    只保留老师式少量高价值旁批，避免把模型输出全量铺到画面上。
     """
     annotations: List[Annotation] = []
     ann_counter = 0
 
+    error_candidates: List[Tuple[int, int, SentenceAnalysis, ErrorItem]] = []
+    star_candidates: List[Tuple[int, SentenceAnalysis]] = []
+    wave_candidates: List[Tuple[int, SentenceAnalysis]] = []
+
     for si, sa in enumerate(result.sentence_analyses):
-        # ── 波浪线：精彩句（文字底部下方20px，基础偏移+Canvas固定偏移确保不覆盖）──
-        if sa.is_excellent and sa.bbox:
-            ann_counter += 1
-            b = sa.bbox
-            # 波浪线放在文字行底部下方20px（基础偏移，Canvas渲染时再+12px固定偏移）
-            wave_y = b.y2 + 20
-            annotations.append(Annotation(
-                id=f"ann_{ann_counter:03d}",
-                annotation_type=AnnotationType.WAVY,
-                start_x=b.x1,
-                start_y=wave_y,
-                end_x=b.x2,
-                end_y=wave_y,
-                source=AnnotationSource.AI,
-                sentence_index=si,
-                comment="翻译精彩，表达流畅",
-            ))
-
-        # ── 横线：问题句（错误文字底部下方15px，基础偏移+Canvas固定偏移确保不覆盖）──
         for ei, err in enumerate(sa.errors):
-            ann_counter += 1
-            # 优先使用 error 的 bbox，否则使用 sentence 的 bbox
-            eb = err.bbox if err.bbox else sa.bbox
-            if not eb:
-                continue
-            # 横线放在错误文字底部下方15px（基础偏移，Canvas渲染时再+10px固定偏移）
-            line_y = eb.y2 + 15
-            comment_parts = [f"[{err.error_type.value}]"]
-            if err.original_text and err.correct_text:
-                comment_parts.append(f"{err.original_text} → {err.correct_text}")
-            if err.reason:
-                comment_parts.append(err.reason)
-            if err.deduction_points:
-                comment_parts.append(f"扣{err.deduction_points}分")
-
-            annotations.append(Annotation(
-                id=f"ann_{ann_counter:03d}",
-                annotation_type=AnnotationType.LINE,
-                start_x=eb.x1,
-                start_y=line_y,
-                end_x=eb.x2,
-                end_y=line_y,
-                source=AnnotationSource.AI,
-                sentence_index=si,
-                error_index=ei,
-                comment=": ".join(comment_parts),
-            ))
-
-        # ── 星星：点睛句（句子左上角区域，偏上15px偏左15px，避免遮挡文字）──
+            if err.bbox or sa.bbox:
+                error_candidates.append((si, ei, sa, err))
         if sa.is_highlight and sa.bbox:
-            ann_counter += 1
-            b = sa.bbox
-            # 星星放在句子左上角偏上偏左的位置，避免遮挡文字
-            star_x = b.x1 - 15
-            star_y = b.y1 - 15
-            annotations.append(Annotation(
-                id=f"ann_{ann_counter:03d}",
-                annotation_type=AnnotationType.STAR,
-                start_x=star_x,
-                start_y=star_y,
-                end_x=star_x,
-                end_y=star_y,
-                source=AnnotationSource.AI,
-                sentence_index=si,
-                comment=sa.highlight_comment or f"点睛句: {sa.original_classical}",
-            ))
+            star_candidates.append((si, sa))
+        if sa.is_excellent and sa.bbox and not sa.errors:
+            wave_candidates.append((si, sa))
+
+    error_candidates.sort(
+        key=lambda item: (
+            item[3].deduction_points,
+            _error_priority(item[3]),
+            1 if item[3].bbox else 0,
+        ),
+        reverse=True,
+    )
+
+    for si, ei, sa, err in error_candidates[:6]:
+        eb = err.bbox if err.bbox else sa.bbox
+        if not eb:
+            continue
+        ann_counter += 1
+        line_y = eb.y2 + 4
+        annotations.append(Annotation(
+            id=f"ann_{ann_counter:03d}",
+            annotation_type=AnnotationType.LINE,
+            start_x=eb.x1,
+            start_y=line_y,
+            end_x=eb.x2,
+            end_y=line_y,
+            source=AnnotationSource.AI,
+            sentence_index=si,
+            error_index=ei,
+            comment=_teacher_error_comment(err),
+        ))
+
+    star_candidates.sort(key=lambda item: _highlight_priority(item[1]), reverse=True)
+    for si, sa in star_candidates[:2]:
+        if len(annotations) >= 9:
+            break
+        ann_counter += 1
+        b = sa.bbox
+        star_x = max(0, b.x1 - 18)
+        star_y = max(0, b.y1 - 12)
+        annotations.append(Annotation(
+            id=f"ann_{ann_counter:03d}",
+            annotation_type=AnnotationType.STAR,
+            start_x=star_x,
+            start_y=star_y,
+            end_x=star_x,
+            end_y=star_y,
+            source=AnnotationSource.AI,
+            sentence_index=si,
+            comment=_teacher_star_comment(sa),
+        ))
+
+    for si, sa in wave_candidates[:1]:
+        if len(annotations) >= 10:
+            break
+        ann_counter += 1
+        b = sa.bbox
+        wave_y = b.y2 + 4
+        annotations.append(Annotation(
+            id=f"ann_{ann_counter:03d}",
+            annotation_type=AnnotationType.WAVY,
+            start_x=b.x1,
+            start_y=wave_y,
+            end_x=b.x2,
+            end_y=wave_y,
+            source=AnnotationSource.AI,
+            sentence_index=si,
+            comment=_teacher_wave_comment(sa),
+        ))
 
     return annotations
+
+
+def _error_priority(err: ErrorItem) -> int:
+    text = f"{getattr(err.error_type, 'value', err.error_type)} {err.original_text} {err.correct_text} {err.reason}"
+    if "主语" in text:
+        return 8
+    if "错字" in text or "不规范" in text or "字" in text and any(k in text for k in ["藤", "飘", "俶", "佩"]):
+        return 7
+    priority = {
+        ErrorType.TYPO: 6,
+        ErrorType.OMISSION: 5,
+        ErrorType.CONTENT_ERROR: 5,
+        ErrorType.WORD_ORDER: 3,
+        ErrorType.FUNCTION_ERROR: 3,
+        ErrorType.ADDITION: 2,
+        ErrorType.PUNCTUATION: 0,
+    }
+    return priority.get(err.error_type, 0)
+
+
+def _highlight_priority(sa: SentenceAnalysis) -> int:
+    key_phrases = [
+        "心乐之",
+        "全石以为底",
+        "潭中鱼可百许头",
+        "青树翠蔓",
+        "凄神寒骨",
+    ]
+    for idx, phrase in enumerate(key_phrases):
+        if phrase in sa.original_classical:
+            return len(key_phrases) - idx
+    return 0
+
+
+def _clip_comment(text: str, limit: int = 28) -> str:
+    text = " ".join((text or "").replace("\n", " ").split())
+    if len(text) <= limit:
+        return text
+    return text[:limit - 1] + "…"
+
+
+def _teacher_error_comment(err: ErrorItem) -> str:
+    text = f"{getattr(err.error_type, 'value', err.error_type)} {err.original_text} {err.correct_text} {err.reason}"
+    if "主语" in text and err.correct_text:
+        return _clip_comment(f"补充主语：{err.correct_text}", 30)
+    if "错字" in text or "不规范" in text:
+        if err.original_text:
+            return _clip_comment(f"错字：{err.original_text}", 30)
+    if err.original_text in ("佩环", "珮环") or "佩环" in text or "珮环" in text:
+        return _clip_comment("佩环：玉佩玉环相碰撞", 30)
+    if err.original_text and err.correct_text:
+        return _clip_comment(f"改：{err.original_text}→{err.correct_text}")
+    if err.reason:
+        return _clip_comment(f"需订正：{err.reason}")
+    return _clip_comment(f"需订正：{err.error_type.value}")
+
+
+def _teacher_star_comment(sa: SentenceAnalysis) -> str:
+    if sa.highlight_comment:
+        text = sa.highlight_comment
+        if not text.startswith("点睛句"):
+            text = f"点睛句：{text}"
+        return _clip_comment(text, 30)
+    return _clip_comment("点睛句：关键画面译得准", 30)
+
+
+def _teacher_wave_comment(sa: SentenceAnalysis) -> str:
+    if sa.highlight_comment:
+        return _clip_comment(sa.highlight_comment, 26)
+    return "好句：翻译准确流畅"
 
 
 def annotations_to_dict_list(annotations: List[Annotation]) -> List[dict]:

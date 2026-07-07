@@ -35,7 +35,7 @@ class QwenVLMaxGrader(GradingStrategy):
         base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1",
         model: str = "qwen-vl-max",
         temperature: float = 0.1,
-        max_tokens: int = 6144,
+        max_tokens: int = 8192,
         max_retries: int = 1,
         timeout_seconds: int = 600,
     ):
@@ -153,6 +153,19 @@ class QwenVLMaxGrader(GradingStrategy):
    - "听闻" ≈ "听到/听见"
 3. **严格扣分**：实词错误(扣3-5分)、虚词错误(扣2-3分)、漏译(扣2分)、多译(扣1分)
 4. **合理变体不扣分**：学生用自己的话表达相同含义不扣分
+5. **老师式纠错优先**：批改对象是《小石潭记》文言文翻译，不是作文赏析。优先检查缺主语、重点词误译、特殊句式、错别字/不规范字。
+6. **具体到词纠错**：errors.original_text 必须是具体错误词或短语，不允许写整句整段
+7. **标注数量**：问题标注可保留4-6条；优秀句最多1条；点睛句最多2条；总标注最多10条。
+8. **禁止编造**：只基于图片可见文字和课文标准判断，OCR不确定时宁可不标，不要生成图片中没有的短语或问题。
+
+## 老师实批参考口径（必须贴近）
+
+实际老师批改更关注“逐词落实”，不是泛泛点评。请优先识别以下类型：
+- 缺主语：如开头应补“我/我们/我和我的朋友们”；“开辟小路”“下见小潭”等省略句要补“我”。
+- 重点词：佩环=腰间玉佩和玉环相碰撞；全石以为底=以整块石头为底；坻/屿/嵁/岩要逐项落实。
+- 错别字/不规范字：如“藤蔓”“飘拂”“俶尔”等字形错误要标。
+- 点睛句：如果“全石以为底，近岸，卷石底以出，为坻，为屿，为嵁，为岩”大意译对，应优先表扬“重点句理解非常好”。
+- 旁批文字要像老师：例如“补充主语：我”“错字：俶尔”“佩环：腰间的玉佩和玉环相碰撞”“点睛句：重点句理解非常好”。
 
 ## 评分维度（各0-20分）
 
@@ -176,6 +189,7 @@ class QwenVLMaxGrader(GradingStrategy):
       "original_classical": "原文句子（按11句顺序）",
       "student_translation": "学生翻译（该句未识别到写'未识别'）",
       "standard_translation": "标准译文",
+      "polished_translation": "结合原文，将学生译文润色修改为更通顺优雅、符合现代汉语规范的优秀译文",
       "errors": [
         {{
           "error_type": "实词错误|虚词错误|漏译|多译|错别字|语序错误|标点错误",
@@ -193,7 +207,11 @@ class QwenVLMaxGrader(GradingStrategy):
     }}
   ],
   "total_score": 总分(0-100),
-  "overall_comment": "总评（2-3句，结合情感变化：闻水声→乐、观鱼→乐、坐潭上→凄怆、离去→记之）",
+  "overall_comment": "通用风格总评，100-150字，肯定优点并指出问题",
+  "overall_comment_general": "通用风格总评，100-150字，与overall_comment一致，先肯定优点再指出主要问题",
+  "overall_comment_encouraging": "加油鼓励风总评，100-150字，以激励、表扬为主，鼓励小学生保持对文言文的热情",
+  "overall_comment_instructive": "严厉指导风总评，100-150字，严谨指出翻译缺陷和不达标的地方，并给出明确规范和提高要求",
+  "polished_full_translation": "全文润色译文（将整篇学生翻译整理并统一润色后的连贯通顺译文）",
   "dimension_scores": {{
     "完整度": 0-20,
     "准确度": 0-20,
@@ -209,7 +227,7 @@ class QwenVLMaxGrader(GradingStrategy):
   "highlight_sentences": [
     {{"classical": "原文点睛句", "translation": "学生译文", "comment": "赏析"}}
   ],
-  "parent_feedback": "家长反馈话术（100字以内，正向引导+具体建议）",
+  "parent_feedback": "家长反馈话术（100字以内，说明批改符号含义并给出正向引导）",
   "system_tags": ["标签1", "标签2"],
   "confidence": "高|中|低"
 }}
@@ -220,7 +238,8 @@ class QwenVLMaxGrader(GradingStrategy):
 - 总分=100-各句扣分总和，不低于0
 - 6个维度各0-20分，独立评判，不可全部相同
 - 优点至少2条，问题至少1条
-- 点睛句至少标注5句
+- is_excellent 最多1句，is_highlight 最多2句，errors 最多保留6个关键问题
+- reason 和 highlight_comment 要适合旁批展示，控制在25字以内
 - 如学生只翻译了部分句子，完整度维度相应扣分
 - 严格使用上方逐句参照中的标准译文，不要自行编造"""
 
@@ -364,6 +383,10 @@ class QwenVLMaxGrader(GradingStrategy):
             recognized_text=data.get("recognized_text", ""),
             total_score=data.get("total_score", 0),
             overall_comment=data.get("overall_comment", ""),
+            overall_comment_general=data.get("overall_comment_general", data.get("overall_comment", "")),
+            overall_comment_encouraging=data.get("overall_comment_encouraging", ""),
+            overall_comment_instructive=data.get("overall_comment_instructive", ""),
+            polished_full_translation=data.get("polished_full_translation", ""),
             confidence=Confidence(data.get("confidence", "中")),
             raw_response=raw,
         )
@@ -378,6 +401,7 @@ class QwenVLMaxGrader(GradingStrategy):
                 is_excellent=sa_data.get("is_excellent", False),
                 is_highlight=sa_data.get("is_highlight", False),
                 highlight_comment=sa_data.get("highlight_comment", ""),
+                polished_translation=sa_data.get("polished_translation", ""),
             )
             for err_data in sa_data.get("errors", []):
                 if isinstance(err_data, str):
@@ -411,8 +435,57 @@ class QwenVLMaxGrader(GradingStrategy):
 
     def _post_process(self, result: GradingResult) -> GradingResult:
         """后处理：分数校验、置信度判定"""
-        # 分数 clamp
-        result.total_score = max(0, min(100, result.total_score))
+        result.normalize_scores()
+
+        # 只保留少量高价值标注候选，防止模型过度批注。
+        error_items = []
+        for si, sa in enumerate(result.sentence_analyses):
+            for ei, err in enumerate(sa.errors):
+                if self._is_teacher_gradeable_error(sa, err):
+                    error_items.append((si, ei, err))
+
+        priority = {
+            ErrorType.CONTENT_ERROR: 5,
+            ErrorType.OMISSION: 4,
+            ErrorType.WORD_ORDER: 3,
+            ErrorType.FUNCTION_ERROR: 3,
+            ErrorType.ADDITION: 2,
+            ErrorType.TYPO: 1,
+            ErrorType.PUNCTUATION: 0,
+        }
+        error_items.sort(
+            key=lambda item: (
+                item[2].deduction_points,
+                priority.get(item[2].error_type, 0),
+                1 if item[2].bbox else 0,
+            ),
+            reverse=True,
+        )
+        keep_errors = {(si, ei) for si, ei, _ in error_items[:2]}
+        for si, sa in enumerate(result.sentence_analyses):
+            sa.errors = [
+                err for ei, err in enumerate(sa.errors)
+                if (si, ei) in keep_errors and self._is_specific_error_text(err.original_text)
+            ]
+            for err in sa.errors:
+                err.reason = self._clip_teacher_comment(err.reason, 28)
+
+        highlight_count = 0
+        excellent_count = 0
+        highlight_order = self._rank_highlight_sentences(result.sentence_analyses)
+        keep_highlights = set(highlight_order[:2])
+
+        for idx, sa in enumerate(result.sentence_analyses):
+            if sa.is_highlight and idx in keep_highlights and highlight_count < 2 and not sa.errors:
+                highlight_count += 1
+                sa.highlight_comment = self._clip_teacher_comment(sa.highlight_comment, 30)
+            else:
+                sa.is_highlight = False
+
+            if sa.is_excellent and not sa.errors and not sa.is_highlight and excellent_count < 2:
+                excellent_count += 1
+            else:
+                sa.is_excellent = False
 
         # 置信度判定
         if result.confidence == Confidence.LOW:
@@ -425,27 +498,148 @@ class QwenVLMaxGrader(GradingStrategy):
 
         return result
 
+    def _is_specific_error_text(self, text: str) -> bool:
+        """错误标注必须落在词或短语上，过滤整句整段。"""
+        clean = re.sub(r"[，。、；：！？\s,.;:!?]", "", text or "")
+        return 1 <= len(clean) <= 10
+
+    def _is_teacher_gradeable_error(self, sa: SentenceAnalysis, err: ErrorItem) -> bool:
+        """只保留能落到学生译文上的具体错误，过滤把原文当错误的误判。"""
+        if not self._is_specific_error_text(err.original_text):
+            return False
+        original = self._clean_text(err.original_text)
+        student = self._clean_text(sa.student_translation)
+        classical = self._clean_text(sa.original_classical)
+        correct = self._clean_text(err.correct_text)
+        if not original or original not in student:
+            return False
+        if original in classical and original not in student:
+            return False
+        if len(correct) > 16:
+            return False
+        return True
+
+    def _rank_highlight_sentences(self, analyses: list) -> list:
+        key_phrases = [
+            "心乐之",
+            "全石以为底",
+            "潭中鱼可百许头",
+            "青树翠蔓",
+            "凄神寒骨",
+        ]
+        scored = []
+        for idx, sa in enumerate(analyses):
+            if not sa.is_highlight:
+                continue
+            score = 0
+            for pos, phrase in enumerate(key_phrases):
+                if phrase in sa.original_classical:
+                    score = len(key_phrases) - pos
+                    break
+            scored.append((score, -idx, idx))
+        scored.sort(reverse=True)
+        return [idx for _, _, idx in scored]
+
+    def _clean_text(self, text: str) -> str:
+        return re.sub(r"[，。、；：！？\s,.;:!?\"'“”‘’（）()《》]", "", text or "")
+
+    def _clip_teacher_comment(self, text: str, limit: int) -> str:
+        text = " ".join((text or "").replace("\n", " ").split())
+        if len(text) <= limit:
+            return text
+        return text[:limit - 1] + "…"
+
     # ── 辅助方法 ──────────────────────────────────────
 
-    def _extract_json(self, text: str) -> str:
-        """从文本中提取 JSON（处理模型偶尔包裹 markdown 的情况）"""
-        # 尝试直接解析
-        text = text.strip()
-        if text.startswith("{"):
-            return text
+    def _repair_json(self, json_str: str) -> str:
+        """自动修复被截断的 JSON 字符串，使其符合语法规则以供解析"""
+        json_str = json_str.strip()
+        if not json_str:
+            return "{}"
 
-        # 去除 markdown 代码块
+        in_string = False
+        escape = False
+        stack = []
+        repaired = []
+
+        for char in json_str:
+            repaired.append(char)
+            if escape:
+                escape = False
+                continue
+            if char == '\\':
+                if in_string:
+                    escape = True
+                continue
+            if char == '"':
+                in_string = not in_string
+                continue
+            if not in_string:
+                if char in ('{', '['):
+                    stack.append(char)
+                elif char in ('}', ']'):
+                    if stack:
+                        stack.pop()
+
+        # 如果字符串未闭合，先闭合字符串
+        if in_string:
+            repaired.append('"')
+
+        temp_str = "".join(repaired).strip()
+        # 清除末尾不符合 JSON 语法规则的逗号、冒号、空格等
+        while temp_str and temp_str[-1] in (':', ',', ' ', '\n', '\r'):
+            temp_str = temp_str[:-1]
+
+        # 重新扫描一遍，以防止由于删除尾部字符导致状态改变
+        in_string = False
+        escape = False
+        stack = []
+        for char in temp_str:
+            if escape:
+                escape = False
+                continue
+            if char == '\\':
+                if in_string:
+                    escape = True
+                continue
+            if char == '"':
+                in_string = not in_string
+                continue
+            if not in_string:
+                if char in ('{', '['):
+                    stack.append(char)
+                elif char in ('}', ']'):
+                    if stack:
+                        stack.pop()
+
+        if in_string:
+            temp_str += '"'
+
+        # 闭合未闭合的大括号与中括号
+        while stack:
+            open_char = stack.pop()
+            if open_char == '{':
+                temp_str += '}'
+            elif open_char == '[':
+                temp_str += ']'
+
+        return temp_str
+
+    def _extract_json(self, text: str) -> str:
+        """从文本中提取 JSON（并对可能截断的 JSON 进行自动修复）"""
+        text = text.strip()
+        
+        # 去除 markdown 包裹
         match = re.search(r"```(?:json)?\s*\n?(.*?)\n?```", text, re.DOTALL)
         if match:
-            return match.group(1).strip()
+            text = match.group(1).strip()
+        else:
+            # 找到首个左大括号
+            start = text.find("{")
+            if start != -1:
+                text = text[start:]
 
-        # 尝试找到 { 到 } 的范围
-        start = text.find("{")
-        end = text.rfind("}")
-        if start != -1 and end != -1:
-            return text[start:end+1]
-
-        return text
+        return self._repair_json(text)
 
     def _parse_error_type(self, raw: str) -> ErrorType:
         """将模型输出的错误类型字符串映射到枚举"""
@@ -587,4 +781,3 @@ class QwenVLMaxGrader(GradingStrategy):
 
 第11句：同游者：吴武陵，龚古，余弟宗玄。隶而从者，崔氏二小生：曰恕己，曰奉壹。
 → 一同游览的人：吴武陵、龚古，我的弟弟宗玄。跟随着同去的，还有姓崔的两个年轻人：一个叫恕己，一个叫奉壹。"""
-

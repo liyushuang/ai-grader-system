@@ -30,7 +30,7 @@ class StarAnnotation {
 
         const group = new fabric.Group([glow, star, highlight], {
             selectable: true, evented: true,
-            hasControls: false, hasBorders: true,
+            hasControls: false, hasBorders: false,
             borderColor: starColor, borderScaleFactor: 1,
             padding: 4, lockRotation: true, lockScalingX: true, lockScalingY: true,
             ...options,
