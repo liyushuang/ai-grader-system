@@ -63,18 +63,18 @@ export BAIDU_API_KEY="你的百度OCR Key"
 export BAIDU_SECRET_KEY="你的百度OCR Secret"
 
 export DASHSCOPE_API_KEY="你的千问 Key"
-export FUSION_QWEN_MODEL="qwen3.6"
+export FUSION_QWEN_MODEL="qwen3.6-max-preview"
 
 export ARK_API_KEY="你的方舟 Key"
 export ARK_MODEL="ark-code-latest"
-export ARK_BASE_URL="https://ark.cn-beijing.volces.com/api/v3"
+export ARK_BASE_URL="https://ark.cn-beijing.volces.com/api/plan/v3"
 ```
 
 说明：
 
 - `.env` 已在 `.gitignore` 中忽略。
 - 方舟入口默认使用 `ark-code-latest`。
-- 千问入口当前按 `qwen3.6` 配置，无思考模式。
+- 千问入口当前按 `qwen3.6-max-preview` 配置，无思考模式。
 
 ## 本地运行
 

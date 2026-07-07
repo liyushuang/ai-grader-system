@@ -36,7 +36,7 @@ if not os.environ.get("BAIDU_SECRET_KEY"):
 if not os.environ.get("DASHSCOPE_API_KEY"):
     os.environ["DASHSCOPE_API_KEY"] = "sk-ws-H.EMDIIYR.jtU9.MEQCIDg63k7FDifjcSOhZIrLlfmhEyb7or87x8Ka3ljuyrKFAiA9kSj93j6TJaUlazt1R_IS1QC-DWan69IoLEyeIbaZhw"
 if not os.environ.get("ARK_BASE_URL"):
-    os.environ["ARK_BASE_URL"] = "https://ark.cn-beijing.volces.com/api/v3"
+    os.environ["ARK_BASE_URL"] = "https://ark.cn-beijing.volces.com/api/plan/v3"
 if not os.environ.get("ARK_MODEL"):
     os.environ["ARK_MODEL"] = "ark-code-latest"
 
@@ -621,7 +621,7 @@ HTML_TEMPLATE = """
                         <div class="grader-options">
                             <div class="grader-option">
                                 <input type="radio" id="graderFusion" name="grader" value="fusion" checked>
-                                <label for="graderFusion">千问（推荐·qwen3.6无思考）</label>
+                                <label for="graderFusion">千问（推荐·qwen3.6-max-preview无思考）</label>
                             </div>
                             <div class="grader-option">
                                 <input type="radio" id="graderArkCode" name="grader" value="ark_code">
@@ -818,9 +818,9 @@ def _friendly_model_error(message: str) -> str:
     text = str(message or "")
     lower = text.lower()
     if "model_not_found" in lower or "does not exist or you do not have access" in lower:
-        return "千问模型不可用：当前 DashScope Key 没有 qwen3.6 权限，或模型名与控制台不一致。"
+        return "千问模型不可用：当前 DashScope Key 没有 qwen3.6-max-preview 权限，或模型名与控制台不一致。"
     if "authenticationerror" in lower or "unauthorized" in lower or "missing or invalid" in lower:
-        return "方舟 API Key 无效或未生效：请在火山方舟 API Key 管理中复制可用的专属 Key。"
+        return "方舟调用失败：请确认 ARK_API_KEY 与 ARK_BASE_URL=https://ark.cn-beijing.volces.com/api/plan/v3 配套。"
     if "api key" in lower and ("未配置" in text or "not configured" in lower):
         return text
     if len(text) > 180:

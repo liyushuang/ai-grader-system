@@ -319,7 +319,7 @@ function isFusionPipeline(grader) {
 
 function getGraderDisplayName(grader) {
     const names = {
-        fusion: '千问 qwen3.6 无思考',
+        fusion: '千问 qwen3.6-max-preview 无思考',
         ark_code: '方舟 ark-code-latest',
     };
     return names[grader] || grader || '未知模型';

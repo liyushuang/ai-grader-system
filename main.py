@@ -84,7 +84,7 @@ def get_grader(name: str):
             baidu_api_key=baidu_key,
             baidu_secret_key=baidu_secret,
             ark_api_key=ark_key,
-            ark_base_url=os.environ.get("ARK_BASE_URL", "https://ark.cn-beijing.volces.com/api/v3"),
+            ark_base_url=os.environ.get("ARK_BASE_URL", "https://ark.cn-beijing.volces.com/api/plan/v3"),
             llm_provider="ark",
             model=os.environ.get("ARK_MODEL", "ark-code-latest"),
         )

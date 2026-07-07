@@ -62,7 +62,7 @@ class FusionGrader(GradingStrategy):
         self.baidu_secret_key = baidu_secret_key or os.environ.get("BAIDU_SECRET_KEY", "")
         self.volcano_api_key = volcano_api_key or os.environ.get("VOLCANO_API_KEY", "")
         self.ark_api_key = ark_api_key or os.environ.get("ARK_API_KEY", "")
-        self.ark_base_url = ark_base_url or os.environ.get("ARK_BASE_URL", "https://ark.cn-beijing.volces.com/api/v3")
+        self.ark_base_url = ark_base_url or os.environ.get("ARK_BASE_URL", "https://ark.cn-beijing.volces.com/api/plan/v3")
         self.llm_provider = llm_provider.lower()
         self.temperature = temperature
         self.max_tokens = max_tokens
@@ -74,7 +74,7 @@ class FusionGrader(GradingStrategy):
         elif self.llm_provider == "ark":
             self.model = model or os.environ.get("ARK_MODEL", "ark-code-latest")
         else:
-            self.model = model or os.environ.get("FUSION_QWEN_MODEL", "qwen3.6")
+            self.model = model or os.environ.get("FUSION_QWEN_MODEL", "qwen3.6-max-preview")
 
     @property
     def name(self) -> str:
