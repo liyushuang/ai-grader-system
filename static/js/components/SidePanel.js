@@ -88,9 +88,9 @@ class SidePanel {
             item.className = 'ann-item' + (ann.id === window.annotationStore.selectedId ? ' selected' : '');
             item.onclick = () => this._onItemClick(ann.id);
 
-            const iconMap = { wavy: ['∼', 'wavy'], line: ['—', 'line'], star: ['★', 'star'] };
+            const iconMap = { wavy: ['∼', 'wavy'], line: ['—', 'line'], circle: ['○', 'circle'], star: ['★', 'star'] };
             const [icon, cls] = iconMap[ann.type] || ['?', 'line'];
-            const typeLabelMap = { wavy: '波浪线·精彩句', line: '横线·问题句', star: '星星·点睛句' };
+            const typeLabelMap = { wavy: '波浪线·精彩句', line: '横线·问题句', circle: '圆圈·错字词', star: '星星·点睛句' };
             const typeLabel = typeLabelMap[ann.type] || ann.type;
             const sourceLabel = ann.source === 'ai' ? '🤖 AI' : '👤 教师';
 
@@ -175,8 +175,8 @@ class SidePanel {
                 this.openAnnotationEditor(ann.id);
             };
             
-            const iconMap = { wavy: '∼', line: '—', star: '★' };
-            const typeLabelMap = { wavy: '精彩', line: '纠错', star: '点睛' };
+            const iconMap = { wavy: '∼', line: '—', circle: '○', star: '★' };
+            const typeLabelMap = { wavy: '精彩', line: '纠错', circle: '错字', star: '点睛' };
             const icon = iconMap[ann.type] || '?';
             const typeLabel = typeLabelMap[ann.type] || ann.type;
             const sourceLabel = ann.source === 'ai' ? '🤖 AI' : '👤 教师';
@@ -309,7 +309,7 @@ class SidePanel {
             // card connection Y
             const cardY = item.currentY + 15;
             
-            const colorMap = { wavy: '#10b981', line: '#ef4444', star: '#f59e0b' };
+            const colorMap = { wavy: '#10b981', line: '#ef4444', circle: '#ef4444', star: '#f59e0b' };
             const color = colorMap[item.ann.type] || '#3b82f6';
             const isSelected = item.id === window.annotationStore.selectedId;
             

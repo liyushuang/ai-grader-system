@@ -2,9 +2,10 @@
 标注工具函数 — 从 GradingResult 自动生成符号标注数据
 
 规则:
-1. is_excellent=True + bbox存在 → 波浪线标注（原始图片y2+20px，Canvas再+12px固定偏移，确保不遮挡）
-2. errors[i].bbox存在 → 横线标注（原始图片y2+15px，Canvas再+10px固定偏移，确保不遮挡）
-3. is_highlight=True + bbox存在 → 星星标注（句子左上角，偏上15px偏左15px，小星星不遮挡）
+1. 横线：重点词误译、漏译、主语/句式问题、错字。
+2. 星标：点睛句/重点积累句。
+3. 波浪线：翻译准确、表达较好的句子。
+4. 每张图最多 12 条，先按教学优先级筛选，再按图片阅读顺序编号。
 """
 
 from typing import List, Tuple
@@ -16,6 +17,8 @@ from grader_base import (
     SentenceAnalysis, ErrorItem, ErrorType,
 )
 
+MAX_AUTO_ANNOTATIONS = 12
+
 
 def generate_annotations_from_result(result: GradingResult) -> List[Annotation]:
     """
@@ -23,107 +26,221 @@ def generate_annotations_from_result(result: GradingResult) -> List[Annotation]:
 
     只保留老师式少量高价值旁批，避免把模型输出全量铺到画面上。
     """
-    annotations: List[Annotation] = []
-    ann_counter = 0
-
     error_candidates: List[Tuple[int, int, SentenceAnalysis, ErrorItem]] = []
     star_candidates: List[Tuple[int, SentenceAnalysis]] = []
     wave_candidates: List[Tuple[int, SentenceAnalysis]] = []
 
     for si, sa in enumerate(result.sentence_analyses):
         for ei, err in enumerate(sa.errors):
-            if err.bbox or sa.bbox:
+            if getattr(err, "model_added", False):
+                continue
+            if err.bbox and _is_canvas_worthy_error(err):
                 error_candidates.append((si, ei, sa, err))
         if sa.is_highlight and sa.bbox:
             star_candidates.append((si, sa))
         if sa.is_excellent and sa.bbox and not sa.errors:
             wave_candidates.append((si, sa))
 
-    error_candidates.sort(
+    error_candidates = _dedupe_error_candidates(error_candidates)
+    candidates = []
+
+    for si, ei, _sa, err in error_candidates:
+        if not err.bbox:
+            continue
+        candidates.append({
+            "priority": _error_priority(err),
+            "kind_rank": 0,
+            "si": si,
+            "ei": ei,
+            "bbox": err.bbox,
+            "build": lambda si=si, ei=ei, err=err: _build_error_annotation(si, ei, err),
+        })
+
+    for si, sa in star_candidates:
+        if not sa.bbox:
+            continue
+        candidates.append({
+            "priority": 70 + _highlight_priority(sa),
+            "kind_rank": 1,
+            "si": si,
+            "ei": None,
+            "bbox": sa.bbox,
+            "build": lambda si=si, sa=sa: _build_star_annotation(si, sa),
+        })
+
+    for si, sa in wave_candidates:
+        if not sa.bbox:
+            continue
+        candidates.append({
+            "priority": 40 + _highlight_priority(sa),
+            "kind_rank": 2,
+            "si": si,
+            "ei": None,
+            "bbox": sa.bbox,
+            "build": lambda si=si, sa=sa: _build_wave_annotation(si, sa),
+        })
+
+    candidates.sort(
         key=lambda item: (
-            item[3].deduction_points,
-            _error_priority(item[3]),
-            1 if item[3].bbox else 0,
+            item["priority"],
+            -item["kind_rank"],
+            -_bbox_area(item["bbox"]),
         ),
         reverse=True,
     )
+    selected = sorted(
+        candidates[:MAX_AUTO_ANNOTATIONS],
+        key=lambda item: (item["bbox"].y1 if item["bbox"] else 0, item["bbox"].x1 if item["bbox"] else 0),
+    )
 
-    for si, ei, sa, err in error_candidates[:6]:
-        eb = err.bbox if err.bbox else sa.bbox
-        if not eb:
-            continue
-        ann_counter += 1
-        line_y = eb.y2 + 4
-        annotations.append(Annotation(
-            id=f"ann_{ann_counter:03d}",
-            annotation_type=AnnotationType.LINE,
-            start_x=eb.x1,
-            start_y=line_y,
-            end_x=eb.x2,
-            end_y=line_y,
-            source=AnnotationSource.AI,
-            sentence_index=si,
-            error_index=ei,
-            comment=_teacher_error_comment(err),
-        ))
-
-    star_candidates.sort(key=lambda item: _highlight_priority(item[1]), reverse=True)
-    for si, sa in star_candidates[:2]:
-        if len(annotations) >= 9:
-            break
-        ann_counter += 1
-        b = sa.bbox
-        star_x = max(0, b.x1 - 18)
-        star_y = max(0, b.y1 - 12)
-        annotations.append(Annotation(
-            id=f"ann_{ann_counter:03d}",
-            annotation_type=AnnotationType.STAR,
-            start_x=star_x,
-            start_y=star_y,
-            end_x=star_x,
-            end_y=star_y,
-            source=AnnotationSource.AI,
-            sentence_index=si,
-            comment=_teacher_star_comment(sa),
-        ))
-
-    for si, sa in wave_candidates[:1]:
-        if len(annotations) >= 10:
-            break
-        ann_counter += 1
-        b = sa.bbox
-        wave_y = b.y2 + 4
-        annotations.append(Annotation(
-            id=f"ann_{ann_counter:03d}",
-            annotation_type=AnnotationType.WAVY,
-            start_x=b.x1,
-            start_y=wave_y,
-            end_x=b.x2,
-            end_y=wave_y,
-            source=AnnotationSource.AI,
-            sentence_index=si,
-            comment=_teacher_wave_comment(sa),
-        ))
+    annotations: List[Annotation] = []
+    for idx, item in enumerate(selected, 1):
+        ann = item["build"]()
+        ann.id = f"ann_{idx:03d}"
+        annotations.append(ann)
 
     return annotations
 
 
+def _build_error_annotation(si: int, ei: int, err: ErrorItem) -> Annotation:
+    eb = err.bbox
+    if _should_circle_error(err):
+        pad_x = max(6, int(eb.width * 0.18))
+        pad_y = max(6, int(eb.height * 0.12))
+        return Annotation(
+            id="",
+            annotation_type=AnnotationType.CIRCLE,
+            start_x=max(0, eb.x1 - pad_x),
+            start_y=max(0, eb.y1 - pad_y),
+            end_x=eb.x2 + pad_x,
+            end_y=eb.y2 + pad_y,
+            source=AnnotationSource.AI,
+            sentence_index=si,
+            error_index=ei,
+            comment=_teacher_error_comment(err),
+        )
+
+    line_y = _underline_y(eb)
+    return Annotation(
+        id="",
+        annotation_type=AnnotationType.LINE,
+        start_x=eb.x1,
+        start_y=line_y,
+        end_x=eb.x2,
+        end_y=line_y,
+        source=AnnotationSource.AI,
+        sentence_index=si,
+        error_index=ei,
+        comment=_teacher_error_comment(err),
+    )
+
+
+def _should_circle_error(err: ErrorItem) -> bool:
+    text = f"{getattr(err.error_type, 'value', err.error_type)} {err.original_text} {err.correct_text} {err.reason}"
+    return (
+        err.error_type == ErrorType.TYPO
+        or "错字" in text
+        or "不规范字" in text
+        or "错别字" in text
+    )
+
+
+def _build_star_annotation(si: int, sa: SentenceAnalysis) -> Annotation:
+    bbox = sa.bbox
+    return Annotation(
+        id="",
+        annotation_type=AnnotationType.STAR,
+        start_x=max(0, bbox.x1 - 16),
+        start_y=max(0, bbox.y1 + 12),
+        end_x=max(0, bbox.x1 - 16),
+        end_y=max(0, bbox.y1 + 12),
+        source=AnnotationSource.AI,
+        sentence_index=si,
+        error_index=None,
+        comment=_teacher_star_comment(sa),
+    )
+
+
+def _build_wave_annotation(si: int, sa: SentenceAnalysis) -> Annotation:
+    bbox = sa.bbox
+    y = _underline_y(bbox)
+    return Annotation(
+        id="",
+        annotation_type=AnnotationType.WAVY,
+        start_x=bbox.x1,
+        start_y=y,
+        end_x=bbox.x2,
+        end_y=y,
+        source=AnnotationSource.AI,
+        sentence_index=si,
+        error_index=None,
+        comment=_teacher_wave_comment(sa),
+    )
+
+
 def _error_priority(err: ErrorItem) -> int:
     text = f"{getattr(err.error_type, 'value', err.error_type)} {err.original_text} {err.correct_text} {err.reason}"
+    if any(k in text for k in ["以为", "过清", "可", "许", "斗折", "蛇行", "犬牙", "凄神寒骨", "悄怆幽邃", "空游", "佩环", "珮环"]):
+        return 100
+    if err.error_type in (ErrorType.OMISSION, ErrorType.CONTENT_ERROR, ErrorType.FUNCTION_ERROR):
+        return 90 + int(err.deduction_points or 0)
     if "主语" in text:
-        return 8
-    if "错字" in text or "不规范" in text or "字" in text and any(k in text for k in ["藤", "飘", "俶", "佩"]):
-        return 7
+        return 86
+    if "错字" in text or "不规范" in text or ("字" in text and any(k in text for k in ["藤", "飘", "俶", "佩"])):
+        return 82
     priority = {
-        ErrorType.TYPO: 6,
-        ErrorType.OMISSION: 5,
-        ErrorType.CONTENT_ERROR: 5,
-        ErrorType.WORD_ORDER: 3,
-        ErrorType.FUNCTION_ERROR: 3,
-        ErrorType.ADDITION: 2,
+        ErrorType.TYPO: 70,
+        ErrorType.WORD_ORDER: 65,
+        ErrorType.ADDITION: 55,
         ErrorType.PUNCTUATION: 0,
     }
     return priority.get(err.error_type, 0)
+
+
+def _is_canvas_worthy_error(err: ErrorItem) -> bool:
+    text = f"{getattr(err.error_type, 'value', err.error_type)} {err.original_text} {err.correct_text} {err.reason}"
+    if "主语" in text:
+        return True
+    if "佩环" in text or "珮环" in text:
+        return True
+    if err.error_type in (ErrorType.OMISSION, ErrorType.CONTENT_ERROR, ErrorType.FUNCTION_ERROR, ErrorType.WORD_ORDER):
+        return True
+    if "错字" in text or "不规范" in text:
+        return True
+    if err.error_type in (ErrorType.TYPO, ErrorType.CONTENT_ERROR) and err.original_text and err.correct_text:
+        return True
+    return False
+
+
+def _dedupe_error_candidates(candidates: List[Tuple[int, int, SentenceAnalysis, ErrorItem]]) -> List[Tuple[int, int, SentenceAnalysis, ErrorItem]]:
+    result = []
+    seen = set()
+    for item in candidates:
+        _, _, _, err = item
+        text = f"{err.original_text}{err.correct_text}{err.reason}"
+        if "佩环" in text or "珮环" in text:
+            key = "佩环"
+        elif "主语" in text:
+            key = f"主语:{err.correct_text or err.original_text}"
+        else:
+            key = f"{getattr(err.error_type, 'value', err.error_type)}:{err.original_text}:{err.correct_text}"
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(item)
+    return result
+
+
+def _bbox_area(bbox) -> int:
+    if not bbox:
+        return 0
+    return max(0, bbox.x2 - bbox.x1) * max(0, bbox.y2 - bbox.y1)
+
+
+def _underline_y(bbox) -> int:
+    """Place underline near the handwritten baseline, not at Baidu's loose bbox bottom."""
+    height = max(1, bbox.y2 - bbox.y1)
+    return int(bbox.y1 + height * 0.68) + 4
 
 
 def _highlight_priority(sa: SentenceAnalysis) -> int:

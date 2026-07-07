@@ -4,5 +4,6 @@ __pycache__/
 .DS_Store
 output/uploads/
 output/graded_*
+output/debug/
 .env
 *.log

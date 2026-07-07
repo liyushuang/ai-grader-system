@@ -185,6 +185,7 @@ HTML_TEMPLATE = """
         }
         .side-card .card-badge.wavy { background: #10b981; }
         .side-card .card-badge.line { background: #ef4444; }
+        .side-card .card-badge.circle { background: #ef4444; }
         .side-card .card-badge.star { background: #f59e0b; }
         .side-card .card-type {
             font-size: 12px;
@@ -192,6 +193,7 @@ HTML_TEMPLATE = """
         }
         .side-card .card-type.wavy { color: #059669; }
         .side-card .card-type.line { color: #dc2626; }
+        .side-card .card-type.circle { color: #dc2626; }
         .side-card .card-type.star { color: #d97706; }
         .side-card .card-comment {
             font-size: 19px;
@@ -368,11 +370,13 @@ HTML_TEMPLATE = """
                                font-size: 14px; flex-shrink: 0; }
         .ann-item .ann-icon.wavy { background: #d1fae5; color: #059669; }
         .ann-item .ann-icon.line { background: #fee2e2; color: #dc2626; }
+        .ann-item .ann-icon.circle { background: #fee2e2; color: #dc2626; }
         .ann-item .ann-icon.star { background: #fef3c7; color: #d97706; }
         .ann-item .ann-content { flex: 1; min-width: 0; }
         .ann-item .ann-type-label { font-size: 11px; font-weight: 600; margin-bottom: 2px; }
         .ann-item .ann-type-label.wavy { color: #059669; }
         .ann-item .ann-type-label.line { color: #dc2626; }
+        .ann-item .ann-type-label.circle { color: #dc2626; }
         .ann-item .ann-type-label.star { color: #d97706; }
         .ann-item .ann-comment { font-size: 12px; color: #555; line-height: 1.4; 
                                  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -497,10 +501,10 @@ HTML_TEMPLATE = """
         
         /* ── Thinking Panel（内联展示，固定高度不跳动）── */
         .thinking-panel { display: none; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
-            width: min(640px, calc(100% - 72px)); margin: 0;
+            width: min(760px, calc(100% - 72px)); margin: 0;
             background: #fff; border: 1px solid #e8ecf1; border-radius: 10px;
             box-shadow: 0 14px 40px rgba(15,23,42,0.12); flex-direction: column; overflow: hidden;
-            height: min(360px, calc(100% - 120px)); flex-shrink: 0; transition: all 0.3s ease; z-index: 35; }
+            height: min(420px, calc(100% - 120px)); flex-shrink: 0; transition: all 0.3s ease; z-index: 35; }
         .thinking-panel.show { display: flex; }
         .thinking-panel.collapsed .thinking-body { display: none; }
         .thinking-panel.collapsed { height: 38px; }
@@ -522,9 +526,9 @@ HTML_TEMPLATE = """
             border-radius: 0 2px 2px 0; transition: width 0.4s ease; }
         
         /* 阶段标签 — 固定布局不跳动 */
-        .thinking-stages { padding: 10px 18px; display: flex; gap: 10px; flex-wrap: wrap; align-items: center; flex-shrink: 0; }
-        .thinking-stage { display: flex; align-items: center; gap: 6px; font-size: 13px; color: #94a3b8;
-            padding: 4px 10px; border-radius: 12px; background: #fafafa; transition: all 0.3s; }
+        .thinking-stages { padding: 10px 18px; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; flex-shrink: 0; }
+        .thinking-stage { display: flex; align-items: center; gap: 6px; font-size: 12px; color: #94a3b8;
+            padding: 6px 10px; border-radius: 8px; background: #fafafa; transition: all 0.3s; min-width: 0; }
         .thinking-stage.active { color: #4a90d9; background: #e8f0fe; font-weight: 600; }
         .thinking-stage.done { color: #52c41a; background: #f0fdf4; }
         .stage-icon { font-size: 12px; width: 14px; text-align: center; }
@@ -595,6 +599,7 @@ HTML_TEMPLATE = """
             <div class="tool-separator"></div>
             <button class="tool-btn" data-tooltip="波浪线 — 精彩句 (W)" id="toolWavy" onclick="setTool('wavy')" style="color:#059669;">∼</button>
             <button class="tool-btn" data-tooltip="横线 — 问题句 (L)" id="toolLine" onclick="setTool('line')" style="color:#dc2626;">—</button>
+            <button class="tool-btn" data-tooltip="圆圈 — 错字词 (C)" id="toolCircle" onclick="setTool('circle')" style="color:#dc2626;">○</button>
             <button class="tool-btn" data-tooltip="★ 星星 — 点睛句 (S)" id="toolStar" onclick="setTool('star')" style="color:#d97706;">★</button>
             <div class="tool-separator"></div>
             <button class="tool-btn" data-tooltip="删除选中 (Del)" onclick="deleteSelected()">🗑️</button>
@@ -653,9 +658,11 @@ HTML_TEMPLATE = """
                     <div class="thinking-progress"><div class="progress-fill" id="thinkingProgress" style="width:0%"></div></div>
                     <div class="thinking-stages" id="thinkingStages">
                         <div class="thinking-stage" id="stage-ocr"><span class="stage-icon">🔍</span>OCR识别</div>
+                        <div class="thinking-stage" id="stage-clean"><span class="stage-icon">🧹</span>文本清洗</div>
+                        <div class="thinking-stage" id="stage-align"><span class="stage-icon">🧭</span>标准对齐</div>
                         <div class="thinking-stage" id="stage-rule"><span class="stage-icon">📐</span>规则初判</div>
-                        <div class="thinking-stage" id="stage-llm"><span class="stage-icon">🧠</span>AI分析</div>
-                        <div class="thinking-stage" id="stage-fuse"><span class="stage-icon">🔗</span>结果融合</div>
+                        <div class="thinking-stage" id="stage-llm"><span class="stage-icon">🧠</span>模型复核</div>
+                        <div class="thinking-stage" id="stage-fuse"><span class="stage-icon">🔗</span>坐标回填</div>
                     </div>
                     <div class="thinking-output" id="thinkingOutput"></div>
                     <div class="thinking-done-badge" id="thinkingDoneBadge">✅ 批改完成</div>
@@ -694,6 +701,7 @@ HTML_TEMPLATE = """
             <select id="editType" onchange="onEditTypeChange()">
                 <option value="wavy">～～ 波浪线（精彩句）</option>
                 <option value="line">—— 横线（问题句）</option>
+                <option value="circle">○ 圆圈（错字词）</option>
                 <option value="star">★ 星星（点睛句）</option>
             </select>
             <label>批注文字</label>
@@ -710,6 +718,7 @@ HTML_TEMPLATE = """
     <div class="context-menu" id="contextMenu">
         <div class="menu-item" onclick="contextSwitchType('wavy')">～～ 改为波浪线</div>
         <div class="menu-item" onclick="contextSwitchType('line')">—— 改为横线</div>
+        <div class="menu-item" onclick="contextSwitchType('circle')">○ 改为圆圈</div>
         <div class="menu-item" onclick="contextSwitchType('star')">★ 改为星星</div>
         <div class="menu-divider"></div>
         <div class="menu-item danger" onclick="deleteSelected()">🗑️ 删除</div>
@@ -766,6 +775,7 @@ HTML_TEMPLATE = """
     <script src="/static/js/annotations/WavyLine.js"></script>
     <script src="/static/js/annotations/StraightLine.js"></script>
     <script src="/static/js/annotations/StarAnnotation.js"></script>
+    <script src="/static/js/annotations/CircleAnnotation.js"></script>
     <script src="/static/js/core/CanvasManager.js"></script>
     <script src="/static/js/components/SidePanel.js"></script>
     <script src="/static/js/components/GradingReportPanel.js"></script>
@@ -851,7 +861,8 @@ def grade_stream():
         stream_with_context(generate()),
         mimetype="text/event-stream",
         headers={
-            "Cache-Control": "no-cache",
+            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+            "Pragma": "no-cache",
             "X-Accel-Buffering": "no",
             "Connection": "keep-alive",
         }
@@ -880,6 +891,7 @@ def _build_result_dict(result, annotations):
         "system_tags": result.system_tags,
         "grader_name": result.grader_name,
         "processing_time_ms": result.processing_time_ms,
+        "pipeline_debug_path": getattr(result, "pipeline_debug_path", ""),
         "annotations": annotations_to_dict_list(annotations),
         "sentence_analyses": [
             {
@@ -899,6 +911,7 @@ def _build_result_dict(result, annotations):
                         "reason": e.reason,
                         "deduction_points": e.deduction_points,
                         "bbox": e.bbox.to_list() if e.bbox else None,
+                        "anchor_ids": getattr(e, "anchor_ids", []),
                     }
                     for e in sa.errors
                 ],
@@ -918,144 +931,81 @@ def _build_demo_session():
         {
             "id": "demo_ann_1",
             "type": "line",
-            "start_x": 70,
-            "start_y": 170,
-            "end_x": 760,
-            "end_y": 170,
+            "start_x": 463,
+            "start_y": 444,
+            "end_x": 591,
+            "end_y": 444,
             "source": "ai",
             "sentence_index": 0,
             "error_index": 0,
-            "comment": "补充主语：我/我们/我和我的朋友们",
+            "comment": "佩环：腰间的玉佩和玉环相碰撞",
         },
         {
             "id": "demo_ann_2",
             "type": "line",
-            "start_x": 500,
-            "start_y": 318,
-            "end_x": 640,
-            "end_y": 318,
+            "start_x": 139,
+            "start_y": 529,
+            "end_x": 268,
+            "end_y": 529,
             "source": "ai",
             "sentence_index": 1,
-            "error_index": 1,
-            "comment": "佩环：腰间玉佩和玉环相碰撞",
+            "error_index": 0,
+            "comment": "补主语：我",
         },
         {
             "id": "demo_ann_3",
             "type": "line",
-            "start_x": 680,
-            "start_y": 450,
-            "end_x": 810,
-            "end_y": 450,
-            "source": "ai",
-            "sentence_index": 2,
-            "error_index": 2,
-            "comment": "补主语：我",
-        },
-        {
-            "id": "demo_ann_4",
-            "type": "star",
-            "start_x": 116,
-            "start_y": 642,
-            "end_x": 116,
-            "end_y": 642,
+            "start_x": 839,
+            "start_y": 1368,
+            "end_x": 976,
+            "end_y": 1368,
             "source": "ai",
             "sentence_index": 3,
-            "error_index": None,
-            "comment": "点睛句：全石以为底等重点句理解好",
-        },
-        {
-            "id": "demo_ann_5",
-            "type": "wavy",
-            "start_x": 120,
-            "start_y": 838,
-            "end_x": 1180,
-            "end_y": 838,
-            "source": "ai",
-            "sentence_index": 4,
-            "error_index": None,
-            "comment": "重点句理解非常好",
-        },
-        {
-            "id": "demo_ann_6",
-            "type": "line",
-            "start_x": 650,
-            "start_y": 1218,
-            "end_x": 720,
-            "end_y": 1218,
-            "source": "ai",
-            "sentence_index": 5,
-            "error_index": 3,
-            "comment": "不规范字：藤",
-        },
-        {
-            "id": "demo_ann_7",
-            "type": "line",
-            "start_x": 910,
-            "start_y": 1318,
-            "end_x": 1036,
-            "end_y": 1318,
-            "source": "ai",
-            "sentence_index": 5,
-            "error_index": 4,
+            "error_index": 0,
             "comment": "错字：飘拂",
-        },
-        {
-            "id": "demo_ann_8",
-            "type": "line",
-            "start_x": 836,
-            "start_y": 1618,
-            "end_x": 966,
-            "end_y": 1618,
-            "source": "ai",
-            "sentence_index": 6,
-            "error_index": 5,
-            "comment": "错字：俶尔",
         },
     ]
 
     grading_data = {
-        "total_score": 84,
-        "total_errors": 6,
-        "total_deductions": 16,
+        "total_score": 85,
+        "total_errors": 3,
+        "total_deductions": 7,
         "confidence": "high",
-        "overall_comment": "本篇译文整体完成度较高，尤其“全石以为底”等重点句理解较好，能看出对课文大意有把握。主要问题集中在省略主语未补、个别重点词解释不够准确，以及“藤、飘拂、俶尔”等字形错误。订正时要逐字对应原文，不要只写大意。",
-        "overall_comment_general": "本篇译文整体完成度较高，尤其“全石以为底”等重点句理解较好，能看出对课文大意有把握。主要问题集中在省略主语未补、个别重点词解释不够准确，以及“藤、飘拂、俶尔”等字形错误。订正时要逐字对应原文，不要只写大意。",
-        "overall_comment_encouraging": "这次翻译的重点句掌握不错，特别是小石潭石底形态这一句理解较好。接下来把省略主语补完整，再把几个易错字认真订正，译文会更准确、更像标准答案。",
-        "overall_comment_instructive": "文言文翻译必须字字落实。本次仍有省略主语未补、重点词解释不准和错别字问题，尤其“佩环、藤蔓、飘拂、俶尔”要订正到位。建议按原文逐词检查，不要只凭大意翻译。",
+        "overall_comment": "本页译文前半部分完成较认真，大意基本连贯。需要重点订正三处：把“佩环”解释为腰间玉佩和玉环相碰撞的声音；“伐竹取道”这类省略句要补出主语“我”；“飘浮”应写作“飘拂”。",
+        "overall_comment_general": "本页译文前半部分完成较认真，大意基本连贯。需要重点订正三处：把“佩环”解释为腰间玉佩和玉环相碰撞的声音；“伐竹取道”这类省略句要补出主语“我”；“飘浮”应写作“飘拂”。",
+        "overall_comment_encouraging": "这页翻译整体顺序清楚，已经能看出对课文内容的理解。再把“佩环”、补主语和“飘拂”这几个细节订正好，译文会更准确。",
+        "overall_comment_instructive": "文言文翻译要逐词落实。本页主要问题是重点词解释不细、省略主语未补、个别字词写错。订正时请按红线位置逐项改正。",
         "polished_full_translation": "我从小丘向西走了一百二十步左右，隔着竹林，就能听到水流的声音，好像人身上的玉佩、玉环相碰撞发出的清脆声音，我心里很高兴。于是我砍倒一些竹子，开辟出一条小路，沿着小路往下走，看见了一个小潭。小潭以整块石头为底，靠近岸边，石底有些部分翻卷出来露出水面，形成坻、屿、嵁、岩等各种形态。青翠的树木和翠绿的藤蔓，蒙盖缠绕，摇曳牵连，参差不齐，随风飘拂。",
-        "homework_completion": "前半篇完成度较高，重点句大意基本准确，后半篇仍需继续逐词订正。",
+        "homework_completion": "本页识别到前半篇译文，整体顺序清楚，局部重点词和字形需要订正。",
         "dimension_scores": {
             "完整度": 18,
-            "准确度": 15,
-            "重点词掌握": 15,
-            "句式处理": 16,
-            "表达流畅度": 17,
-            "忠实原文": 17,
+            "准确度": 17,
+            "重点词掌握": 16,
+            "句式处理": 17,
+            "表达流畅度": 18,
+            "忠实原文": 16,
         },
         "dimension_analysis": {
-            "完整度": {"strength": "前半部分翻译较完整。", "weakness": "后半部分仍需继续校对。"},
-            "准确度": {"strength": "石底重点句理解较好。", "weakness": "佩环、俶尔等重点词需订正。"},
-            "句式处理": {"strength": "部分句子能补出现代语序。", "weakness": "省略主语多处未补。"},
+            "完整度": {"strength": "本页前半部分翻译较完整。", "weakness": "后续页面需继续结合原文校对。"},
+            "准确度": {"strength": "大意基本连贯。", "weakness": "佩环、飘拂等细节需订正。"},
+            "句式处理": {"strength": "多数句子能转成现代汉语。", "weakness": "省略主语处要主动补出。"},
         },
         "strengths": [
-            "“全石以为底”相关重点句理解较好。",
-            "整体能按原文顺序翻译，前半部分完成度较高。",
+            "整体能按原文顺序翻译。",
+            "前半部分大意基本连贯。",
         ],
         "weaknesses": [
-            "多处省略主语没有补出，现代汉语表达不完整。",
-            "个别重点词解释不准确，如“佩环”。",
-            "存在错别字或不规范字，如“藤、飘拂、俶尔”。",
+            "“佩环”解释不够准确。",
+            "省略主语处需要补出“我”。",
+            "“飘浮”应订正为“飘拂”。",
         ],
         "suggestions": [
             "逐句对照原文，先补主语，再检查重点词。",
-            "把错字整理到订正本，尤其关注藤蔓、飘拂、俶尔。",
-            "点睛句可熟读背诵，保持对重点句的准确理解。",
+            "把“佩环”“飘拂”整理到订正本。",
+            "订正时只改红线对应位置，避免整句重写跑偏。",
         ],
-        "highlight_sentences": [
-            "全石以为底，近岸，卷石底以出，为坻，为屿，为嵁，为岩。",
-            "日光下澈，影布石上。",
-        ],
-        "parent_feedback": "孩子对《小石潭记》前半部分理解较好，重点句有亮点。建议家长提醒孩子订正主语、省略句和几个错别字，做到逐字对应原文。",
+        "highlight_sentences": [],
+        "parent_feedback": "孩子本页翻译顺序清楚，大意基本能对应原文。建议重点订正“佩环”、补主语和“飘拂”三处，养成逐词落实的习惯。",
         "system_tags": ["样式调试", "小石潭记", "老师实批口径"],
         "sentence_analyses": [
             {
@@ -1067,63 +1017,50 @@ def _build_demo_session():
                 "is_excellent": False,
                 "is_highlight": False,
                 "highlight_comment": "",
-                "errors": [
-                    {
-                        "error_type": "主语缺失",
-                        "original_text": "沿着小丘向西步行",
-                        "correct_text": "我/我们/我和朋友们",
-                        "reason": "现代汉语翻译需补出省略主语。",
-                        "deduction_points": 2,
-                        "bbox": None,
-                    },
-                    {
-                        "error_type": "实词错误",
-                        "original_text": "佩环",
-                        "correct_text": "腰间的玉佩和玉环相碰撞",
-                        "reason": "佩环不是普通装饰，应译出碰撞声。",
-                        "deduction_points": 3,
-                        "bbox": None,
-                    },
-                ],
+                "errors": [{
+                    "error_type": "实词错误",
+                "original_text": "佩环",
+                "correct_text": "腰间的玉佩和玉环相碰撞",
+                    "reason": "佩环：腰间的玉佩和玉环相碰撞",
+                    "deduction_points": 3,
+                    "bbox": [207, 342, 591, 487],
+                }],
             },
             {
-                "original_classical": "全石以为底，近岸，卷石底以出，为坻，为屿，为嵁，为岩。",
-                "student_translation": "小水潭的底部是一整块石头，靠近岸边，石头从底部向上卷起，露出水面，形成各种形态。",
-                "standard_translation": "小潭以整块石头为底，靠近岸边，石底有些部分翻卷出来露出水面，成为坻、屿、嵁、岩各种形态。",
-                "polished_translation": "小潭以整块石头为底，靠近岸边，石底有些部分翻卷出来露出水面，形成坻、屿、嵁、岩等各种形态。",
-                "sentence_score": 95,
-                "is_excellent": True,
-                "is_highlight": True,
-                "highlight_comment": "重点句理解非常好",
-                "errors": [],
+                "original_classical": "伐竹取道，下见小潭，水尤清冽。",
+                "student_translation": "顿时感到很开心。砍掉一些竹子，开出一条可通行的小路，沿着小路往下，可以看到一个小潭，潭水格外清澈。",
+                "standard_translation": "于是砍倒竹子，开辟出一条道路，往下走看见一个小潭，潭水格外清凉。",
+                "polished_translation": "我砍掉一些竹子，开出一条小路，沿着小路往下走，看见一个小潭，潭水格外清凉。",
+                "sentence_score": 90,
+                "is_excellent": False,
+                "is_highlight": False,
+                "highlight_comment": "",
+                "errors": [{
+                    "error_type": "漏译",
+                    "original_text": "我",
+                    "correct_text": "我",
+                    "reason": "补主语：我",
+                    "deduction_points": 2,
+                    "bbox": [139, 438, 268, 566],
+                }],
             },
             {
                 "original_classical": "青树翠蔓，蒙络摇缀，参差披拂。",
                 "student_translation": "树上缠绕着翠绿的藤蔓，互相遮掩，水短参差不齐，随风摆动。",
                 "standard_translation": "青葱的树木翠绿的藤蔓，蒙盖缠绕摇曳牵连，参差不齐随风飘拂。",
                 "polished_translation": "青葱的树木、翠绿的藤蔓，蒙盖缠绕、摇曳牵连，参差不齐，随风飘拂。",
-                "sentence_score": 76,
+                "sentence_score": 92,
                 "is_excellent": False,
                 "is_highlight": False,
                 "highlight_comment": "",
-                "errors": [
-                    {
-                        "error_type": "错别字",
-                        "original_text": "藤",
-                        "correct_text": "藤",
-                        "reason": "字形不规范，需要订正。",
-                        "deduction_points": 1,
-                        "bbox": None,
-                    },
-                    {
-                        "error_type": "错别字",
-                        "original_text": "飘拂",
-                        "correct_text": "飘拂",
-                        "reason": "字形写错，影响重点词落实。",
-                        "deduction_points": 1,
-                        "bbox": None,
-                    }
-                ],
+                "errors": [{
+                    "error_type": "错别字",
+                    "original_text": "飘浮",
+                    "correct_text": "飘拂",
+                    "reason": "错字：飘拂",
+                    "deduction_points": 2,
+                    "bbox": [839, 1301, 976, 1394],
+                }],
             },
         ],
     }
@@ -1150,7 +1087,7 @@ def _do_grade(request, return_html=True):
             return render_template_string(HTML_TEMPLATE, error="未选择文件")
         return {"error": "未选择文件"}, 400
     
-    grader_name = request.form.get("grader", "qwen")
+    grader_name = request.form.get("grader", "fusion")
     print(f"[DEBUG] 选择的批改策略: {grader_name}")
     
     try:
@@ -1221,6 +1158,7 @@ def _do_grade(request, return_html=True):
                         "reason": e.reason,
                         "deduction_points": e.deduction_points,
                         "bbox": e.bbox.to_list() if e.bbox else None,
+                        "anchor_ids": getattr(e, "anchor_ids", []),
                     }
                     for e in sa.errors
                 ],
@@ -1252,6 +1190,7 @@ def _do_grade(request, return_html=True):
             "highlight_sentences": result.highlight_sentences,
             "parent_feedback": result.parent_feedback,
             "system_tags": result.system_tags,
+            "pipeline_debug_path": getattr(result, "pipeline_debug_path", ""),
             "annotations": annotations_to_dict_list(result.annotations),
             "annotation_version": result.annotation_version,
             "sentence_analyses": [
@@ -1319,6 +1258,7 @@ def _do_grade(request, return_html=True):
                 "highlight_sentences": result.highlight_sentences,
                 "parent_feedback": result.parent_feedback,
                 "system_tags": result.system_tags,
+                "pipeline_debug_path": getattr(result, "pipeline_debug_path", ""),
                 "sentence_analyses": [
                     {
                         "original_classical": sa.original_classical,

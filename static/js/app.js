@@ -11,11 +11,11 @@ function setTool(tool) {
     currentTool = tool;
     
     // 更新工具栏按钮状态
-    ['toolSelect', 'toolWavy', 'toolLine', 'toolStar'].forEach(id => {
+    ['toolSelect', 'toolWavy', 'toolLine', 'toolCircle', 'toolStar'].forEach(id => {
         document.getElementById(id).classList.remove('active');
     });
     
-    const btnMap = { select: 'toolSelect', wavy: 'toolWavy', line: 'toolLine', star: 'toolStar' };
+    const btnMap = { select: 'toolSelect', wavy: 'toolWavy', line: 'toolLine', circle: 'toolCircle', star: 'toolStar' };
     if (btnMap[tool]) {
         document.getElementById(btnMap[tool]).classList.add('active');
     }
@@ -310,6 +310,7 @@ let imageSessions = {};  // { index: { imageB64, annotations, gradingData, taskI
 let currentImageIndex = -1;
 let aiOriginalAnnotations = null;  // 当前图片的AI原始标注备份
 let llmOutputBuffer = '';  // LLM流式输出缓冲
+let stageLogBuffer = '';  // 阶段进度日志缓冲
 let gradingFailures = [];  // 批改失败原因
 
 function handleFileSelect(input) {
@@ -337,15 +338,18 @@ function handleFileSelect(input) {
         thinkingPanel.classList.add('show');
         thinkingPanel.classList.remove('collapsed');
         // 重置阶段标签状态（预渲染的标签只改样式，不重建DOM）
+        const stageIcons = { ocr: '🔍', clean: '🧹', align: '🧭', rule: '📐', llm: '🧠', fuse: '🔗' };
         document.querySelectorAll('.thinking-stage').forEach(el => {
             el.classList.remove('active', 'done');
             const icon = el.querySelector('.stage-icon');
-            if (icon) { icon.classList.remove('spin'); icon.textContent = icon.dataset.original || icon.textContent; }
+            const sid = (el.id || '').replace('stage-', '');
+            if (icon) { icon.classList.remove('spin'); icon.textContent = stageIcons[sid] || icon.textContent; }
         });
         thinkingOutput.textContent = '';
         thinkingProgress.style.width = '0%';
         thinkingDoneBadge.classList.remove('show');
         llmOutputBuffer = '';
+        stageLogBuffer = '';
     }
     
     // 逐个批改
@@ -364,7 +368,7 @@ function handleFileSelect(input) {
                 onAllComplete(completed, total);
             });
         } else {
-            fetch('/grade_json', { method: 'POST', body: formData })
+            fetch('/grade_json?t=' + Date.now(), { method: 'POST', body: formData, cache: 'no-store' })
                 .then(resp => resp.json())
                 .then(data => {
                     completed++;
@@ -393,11 +397,8 @@ async function streamGrade(file, idx, grader, onDone) {
     const thinkingProgress = document.getElementById('thinkingProgress');
     const thinkingDoneBadge = document.getElementById('thinkingDoneBadge');
     
-    // 阶段进度映射
-    const stageProgress = { 'ocr': 15, 'rule': 35, 'llm': 60, 'fuse': 85, 'done': 100 };
-    
     try {
-        const response = await fetch('/grade_stream', { method: 'POST', body: formData });
+        const response = await fetch('/grade_stream?t=' + Date.now(), { method: 'POST', body: formData, cache: 'no-store' });
         const reader = response.body.getReader();
         const decoder = new TextDecoder();
         let buffer = '';
@@ -424,27 +425,7 @@ async function streamGrade(file, idx, grader, onDone) {
                             imageSessions[idx] = {
                                 imageB64: imgData,
                                 annotations: event.data.annotations,
-                                gradingData: {
-                                    total_score: event.data.total_score,
-                                    total_errors: event.data.total_errors,
-                                    overall_comment: event.data.overall_comment,
-                                    overall_comment_general: event.data.overall_comment_general,
-                                    overall_comment_encouraging: event.data.overall_comment_encouraging,
-                                    overall_comment_instructive: event.data.overall_comment_instructive,
-                                    polished_full_translation: event.data.polished_full_translation,
-                                    homework_completion: event.data.homework_completion,
-                                    dimension_scores: event.data.dimension_scores,
-                                    dimension_analysis: event.data.dimension_analysis,
-                                    strengths: event.data.strengths,
-                                    weaknesses: event.data.weaknesses,
-                                    suggestions: event.data.suggestions,
-                                    highlight_sentences: event.data.highlight_sentences,
-                                    parent_feedback: event.data.parent_feedback,
-                                    system_tags: event.data.system_tags,
-                                    sentence_analyses: event.data.sentence_analyses,
-                                    grader_name: event.data.grader_name,
-                                    processing_time_ms: event.data.processing_time_ms,
-                                },
+                                gradingData: normalizeGradingData(event.data, event.data.annotations),
                                 taskId: 'task_' + Date.now() + '_' + idx,
                                 fileName: file.name,
                             };
@@ -477,22 +458,56 @@ async function streamGrade(file, idx, grader, onDone) {
 }
 
 // 阶段顺序
-const STAGE_ORDER = ['ocr', 'rule', 'llm', 'fuse'];
+const STAGE_ORDER = ['ocr', 'clean', 'align', 'rule', 'llm', 'fuse'];
+const STAGE_PROGRESS = {
+    ocr: 12, clean: 26, align: 42, rule: 58, llm: 78, fuse: 92, done: 100,
+    ocr_done: 20, clean_done: 34, align_done: 50, rule_done: 66,
+    llm_done: 86, llm_timeout: 86, fuse_done: 100,
+};
+const STAGE_LABELS = {
+    ocr: 'OCR识别', clean: '文本清洗', align: '标准对齐',
+    rule: '规则初判', llm: '模型复核', fuse: '坐标回填',
+};
+
+function normalizeStageId(stage) {
+    if (!stage) return '';
+    if (stage.endsWith('_done')) return stage.replace('_done', '');
+    if (stage === 'llm_timeout') return 'llm';
+    return stage;
+}
 
 function handleStreamEvent(event, thinkingStages, thinkingOutput, thinkingProgress, thinkingDoneBadge) {
+    if (event.type === 'result') {
+        thinkingProgress.style.width = '100%';
+        thinkingDoneBadge.classList.add('show');
+        STAGE_ORDER.forEach((sid) => {
+            const el = document.getElementById('stage-' + sid);
+            if (!el) return;
+            const iconEl = el.querySelector('.stage-icon');
+            el.classList.remove('active');
+            el.classList.add('done');
+            if (iconEl) {
+                iconEl.classList.remove('spin');
+                iconEl.textContent = '✅';
+            }
+        });
+        return;
+    }
+
     if (event.type === 'stage') {
         // 进度条更新
-        const stageProgress = { 'ocr': 15, 'rule': 35, 'llm': 60, 'fuse': 85 };
-        if (stageProgress[event.stage]) {
-            thinkingProgress.style.width = stageProgress[event.stage] + '%';
+        if (STAGE_PROGRESS[event.stage]) {
+            thinkingProgress.style.width = STAGE_PROGRESS[event.stage] + '%';
         }
-        if (event.stage === 'done') {
+        if (event.stage === 'done' || event.stage === 'fuse_done') {
             thinkingProgress.style.width = '100%';
             thinkingDoneBadge.classList.add('show');
         }
         
         // 更新阶段标签（标签已预渲染，只改样式，不创建DOM）
-        const currentIdx = STAGE_ORDER.indexOf(event.stage);
+        const baseStage = normalizeStageId(event.stage);
+        const currentIdx = STAGE_ORDER.indexOf(baseStage);
+        const isDoneEvent = event.stage.endsWith('_done') || event.stage === 'llm_timeout';
         STAGE_ORDER.forEach((sid, i) => {
             const el = document.getElementById('stage-' + sid);
             if (!el) return;
@@ -500,7 +515,7 @@ function handleStreamEvent(event, thinkingStages, thinkingOutput, thinkingProgre
             el.classList.remove('active', 'done');
             iconEl.classList.remove('spin');
             
-            if (i < currentIdx) {
+            if (i < currentIdx || (i === currentIdx && isDoneEvent)) {
                 // 已完成
                 el.classList.add('done');
                 iconEl.textContent = '✅';
@@ -511,14 +526,32 @@ function handleStreamEvent(event, thinkingStages, thinkingOutput, thinkingProgre
             }
             // 其他保持默认（灰色待处理）
         });
+
+        if (event.message) {
+            const label = STAGE_LABELS[baseStage] || '阶段进度';
+            const prefix = event.stage.endsWith('_done') ? '✓' : (event.stage === 'llm_timeout' ? '!' : '•');
+            const line = `<div class="llm-status">${prefix} ${label}：${escapeHtml(event.message)}</div>`;
+            stageLogBuffer += line;
+            thinkingOutput.innerHTML = stageLogBuffer + extractReadableContent(llmOutputBuffer) + '<span class="cursor-blink"></span>';
+            thinkingOutput.scrollTop = thinkingOutput.scrollHeight;
+        }
     }
     
     if (event.type === 'llm_chunk') {
         llmOutputBuffer += event.text;
-        const display = extractReadableContent(llmOutputBuffer);
+        const display = stageLogBuffer + extractReadableContent(llmOutputBuffer);
         thinkingOutput.innerHTML = display + '<span class="cursor-blink"></span>';
         thinkingOutput.scrollTop = thinkingOutput.scrollHeight;
     }
+}
+
+function escapeHtml(text) {
+    return String(text || '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
 }
 
 /**
@@ -592,12 +625,45 @@ function loadImageAsBase64(file) {
     });
 }
 
+function normalizeGradingData(raw, annotations = []) {
+    const d = raw || {};
+    const correctionComments = (annotations || [])
+        .filter(a => ['line', 'circle'].includes(a.type))
+        .map(a => a.comment)
+        .filter(Boolean);
+    const score = Number.isFinite(Number(d.total_score)) ? Number(d.total_score) : 0;
+    return {
+        total_score: score,
+        total_errors: d.total_errors ?? correctionComments.length,
+        total_deductions: d.total_deductions ?? 0,
+        confidence: d.confidence || '中',
+        overall_comment: d.overall_comment || d.overall_comment_general || '本次批改已生成标注，请结合图片中的标注逐项订正。',
+        overall_comment_general: d.overall_comment_general || d.overall_comment || '本次批改已生成标注，请结合图片中的标注逐项订正。',
+        overall_comment_encouraging: d.overall_comment_encouraging || '',
+        overall_comment_instructive: d.overall_comment_instructive || '',
+        polished_full_translation: d.polished_full_translation || '',
+        homework_completion: d.homework_completion || '',
+        dimension_scores: d.dimension_scores || {},
+        dimension_analysis: d.dimension_analysis || {},
+        strengths: Array.isArray(d.strengths) ? d.strengths : [],
+        weaknesses: Array.isArray(d.weaknesses) ? d.weaknesses : correctionComments,
+        suggestions: Array.isArray(d.suggestions) ? d.suggestions : [],
+        highlight_sentences: Array.isArray(d.highlight_sentences) ? d.highlight_sentences : [],
+        parent_feedback: d.parent_feedback || '',
+        system_tags: Array.isArray(d.system_tags) ? d.system_tags : [],
+        sentence_analyses: Array.isArray(d.sentence_analyses) ? d.sentence_analyses : [],
+        grader_name: d.grader_name || 'fusion',
+        processing_time_ms: d.processing_time_ms || 0,
+        annotations: annotations || d.annotations || [],
+    };
+}
+
 function buildSession(data, file, idx) {
     const result = data.grading_result || {};
     return {
         imageB64: data.image_b64,
         annotations: data.annotations,
-        gradingData: {
+        gradingData: normalizeGradingData({
             total_score: result.total_score,
             total_errors: result.total_errors,
             total_deductions: result.total_deductions,
@@ -619,7 +685,7 @@ function buildSession(data, file, idx) {
             sentence_analyses: result.sentence_analyses,
             grader_name: result.grader_name,
             processing_time_ms: result.processing_time_ms,
-        },
+        }, data.annotations),
         taskId: 'task_' + Date.now() + '_' + idx,
         fileName: file.name,
     };
@@ -637,7 +703,7 @@ function loadDemoSession() {
         0: {
             imageB64: window.__demoSession.imageB64,
             annotations: window.__demoSession.annotations || [],
-            gradingData: window.__demoSession.gradingData || {},
+            gradingData: normalizeGradingData(window.__demoSession.gradingData || {}, window.__demoSession.annotations || []),
             taskId: window.__demoSession.taskId || 'demo_style_debug',
             fileName: window.__demoSession.fileName || '样式调试样例',
         }
@@ -720,9 +786,8 @@ function switchToImage(index) {
         }
         
         // 加载批改报告
-        if (session.gradingData) {
-            window.sidePanel.loadGradingData(session.gradingData);
-        }
+        session.gradingData = normalizeGradingData(session.gradingData, session.annotations);
+        window.sidePanel.loadGradingData(session.gradingData);
         
         renderImageTabs();
         setTool('select');

@@ -52,18 +52,22 @@ _KEYWORD_RULES: Dict[str, dict] = {
     "清冽":      {"correct": "清凉",        "errors": ["清澈", "清冷", "冷冽", "清齐"], "deduction": 5, "type": ErrorType.CONTENT_ERROR},
 
     # ── 第3句：全石以为底，近岸卷石底以出，为坻，为屿，为嵁，为岩 ──
-    "全石以为底": {"correct": "以整块石头为底", "errors": ["铺满石头为底", "全是石头做底"], "deduction": 5, "type": ErrorType.CONTENT_ERROR},
+    "全石以为底": {"correct": "以整块石头为底", "errors": ["铺满石头为底", "全是石头做底", "全是石头", "全部是石头"], "deduction": 5, "type": ErrorType.CONTENT_ERROR},
+    "以为":      {"correct": "把……作为",     "errors": ["认为", "以为"],              "deduction": 5, "type": ErrorType.CONTENT_ERROR},
     "卷石底以出": {"correct": "石底翻卷露出水面", "errors": ["卷起石头", "翻出石头"],    "deduction": 5, "type": ErrorType.CONTENT_ERROR},
     "为坻":      {"correct": "成为坻（水中高地）", "errors": ["是高地", "成为高地"],    "deduction": 3, "type": ErrorType.CONTENT_ERROR},
     "为嵁":      {"correct": "成为嵁（不平的岩石）", "errors": ["是凸起", "是石头"],    "deduction": 3, "type": ErrorType.CONTENT_ERROR},
 
     # ── 第4句：青树翠蔓，蒙络摇缀，参差披拂 ──
     "翠蔓":      {"correct": "翠绿的藤蔓",   "errors": ["翠绿的蔓", "绿蔓"],          "deduction": 3, "type": ErrorType.CONTENT_ERROR},
+    "蒙络":      {"correct": "遮蔽缠绕",     "errors": ["蒙住", "笼罩", "遮住"],      "deduction": 3, "type": ErrorType.CONTENT_ERROR},
+    "摇缀":      {"correct": "摇动下垂连缀", "errors": ["摇摆", "点缀", "装饰"],      "deduction": 3, "type": ErrorType.CONTENT_ERROR},
     "披拂":      {"correct": "随风飘拂",     "errors": ["随风摇荡", "摇荡", "摇摆"],   "deduction": 5, "type": ErrorType.CONTENT_ERROR},
 
     # ── 第5句：潭中鱼可百许头，皆若空游无所依 ──
     "可":       {"correct": "大约",         "errors": ["可以", "可能", "能够"],       "deduction": 3, "type": ErrorType.CONTENT_ERROR},
     "许":       {"correct": "来/左右",       "errors": ["多", "许多", "很多"],        "deduction": 3, "type": ErrorType.CONTENT_ERROR},
+    "空游":      {"correct": "好像在空中游动", "errors": ["空着游", "空游"],          "deduction": 5, "type": ErrorType.CONTENT_ERROR},
     "无所依":    {"correct": "没有依托",      "errors": ["没有依靠", "没有东西靠着", "没什么靠的"], "deduction": 3, "type": ErrorType.CONTENT_ERROR},
 
     # ── 第6句：日光下澈，影布石上。佁然不动，俶尔远逝，往来翕忽，似与游者相乐 ──
@@ -75,12 +79,13 @@ _KEYWORD_RULES: Dict[str, dict] = {
     "相乐":      {"correct": "相互取乐",      "errors": ["互相玩", "一起玩耍"],         "deduction": 3, "type": ErrorType.CONTENT_ERROR},
 
     # ── 第7句：潭西南而望，斗折蛇行，明灭可见 ──
-    "斗折":      {"correct": "像北斗星那样曲折", "errors": ["弯折", "折弯", "打折"],    "deduction": 5, "type": ErrorType.CONTENT_ERROR},
+    "西南":      {"correct": "向西南",         "errors": ["西南方", "西南边"],         "deduction": 3, "type": ErrorType.CONTENT_ERROR},
+    "斗折":      {"correct": "像北斗星那样曲折", "errors": ["弯折", "折弯", "打折", "弯弯曲曲"], "deduction": 5, "type": ErrorType.CONTENT_ERROR},
     "蛇行":      {"correct": "像蛇蜿蜒前行",   "errors": ["蛇爬行", "蛇在爬"],         "deduction": 5, "type": ErrorType.CONTENT_ERROR},
     "明灭可见":  {"correct": "忽明忽暗",       "errors": ["看得见看不见", "一会亮一会暗"], "deduction": 5, "type": ErrorType.CONTENT_ERROR},
 
     # ── 第8句：其岸势犬牙差互，不可知其源 ──
-    "犬牙差互":  {"correct": "像狗牙参差不齐", "errors": ["犬牙交错", "狗牙交错"],      "deduction": 5, "type": ErrorType.CONTENT_ERROR},
+    "犬牙差互":  {"correct": "像狗牙参差交错", "errors": ["犬牙交错", "狗牙交错", "岸边不齐"], "deduction": 5, "type": ErrorType.CONTENT_ERROR},
     "源":       {"correct": "源头",          "errors": ["来源", "起点"],              "deduction": 3, "type": ErrorType.CONTENT_ERROR},
 
     # ── 第9句：坐潭上，四面竹树环合，寂寥无人，凄神寒骨，悄怆幽邃 ──
@@ -90,7 +95,7 @@ _KEYWORD_RULES: Dict[str, dict] = {
 
     # ── 第10句：以其境过清，不可久居，乃记之而去 ──
     "以":       {"correct": "因为",          "errors": ["用", "拿", "把"],            "deduction": 3, "type": ErrorType.FUNCTION_ERROR},
-    "过清":      {"correct": "太冷清",        "errors": ["太清", "过冷", "太冷"],       "deduction": 5, "type": ErrorType.CONTENT_ERROR},
+    "过清":      {"correct": "过于凄清",      "errors": ["太清", "过冷", "太冷", "过于清澈", "太清澈"], "deduction": 5, "type": ErrorType.CONTENT_ERROR},
     "居":       {"correct": "停留/久留",      "errors": ["居住", "住下", "住在这里"],    "deduction": 5, "type": ErrorType.CONTENT_ERROR},
     "乃":       {"correct": "于是/就",        "errors": ["才", "便", "然后"],           "deduction": 3, "type": ErrorType.FUNCTION_ERROR},
 
@@ -98,6 +103,7 @@ _KEYWORD_RULES: Dict[str, dict] = {
     "同游者":    {"correct": "一同游玩的人",   "errors": ["同游的人", "一起玩的人"],     "deduction": 5, "type": ErrorType.CONTENT_ERROR},
     "余弟":      {"correct": "我的弟弟",       "errors": ["弟弟", "我的兄弟"],          "deduction": 3, "type": ErrorType.CONTENT_ERROR},
     "隶而从者":  {"correct": "跟着同去的",      "errors": ["奴隶跟随", "随从人员"],      "deduction": 5, "type": ErrorType.CONTENT_ERROR},
+    "去":       {"correct": "离开",          "errors": ["去", "前往", "去到"],        "deduction": 5, "type": ErrorType.CONTENT_ERROR},
     "二小生":    {"correct": "两个年轻人",      "errors": ["两个小孩", "两个学生", "两个小学生"], "deduction": 5, "type": ErrorType.CONTENT_ERROR},
 }
 
@@ -111,6 +117,9 @@ _SEMANTIC_EQUIVALENTS: Dict[str, List[str]] = {
     "全石以为底": [
         "铺满石头为底", "以整块石头为底", "潭底全是石头",
         "潭底铺满石头为底", "潭底铺满石头", "潭底全是石头为底",
+    ],
+    "以为": [
+        "以整块石头为底", "作为底", "为底", "当作底",
     ],
     "心乐之": [
         "心里很是快乐", "心里很高兴", "心中很是快乐",
@@ -147,18 +156,24 @@ _SEMANTIC_EQUIVALENTS: Dict[str, List[str]] = {
         "石底周边向上卷起", "石底翻卷露出水面", "石底向上翻卷",
     ],
     "为坻": [
-        "有高地", "成为坻", "成为高地",
+        "有高地", "成为坻", "成为高地", "小石礁", "小石堆",
     ],
     "为嵁": [
-        "有凸起的地方", "成为嵁", "不平的岩石",
+        "有凸起的地方", "成为嵁", "不平的岩石", "小石岩", "石岩",
     ],
     "为屿": [
-        "有小屿", "成为屿",
+        "有小屿", "成为屿", "小岛屿", "岛屿",
     ],
 
     # ── 第4句关键词 ──
     "翠蔓": [
         "翠绿藤蔓", "翠绿的藤蔓", "翠绿大树上垂下翠绿藤蔓",
+    ],
+    "蒙络": [
+        "遮蔽缠绕", "蒙盖缠绕", "互相遮掩", "遮掩缠绕",
+    ],
+    "摇缀": [
+        "摇动下垂", "摇曳牵连", "互相遮掩", "摇摆垂下",
     ],
     "披拂": [
         "随风飘拂", "随风摇荡", "随风飘摇",
@@ -191,9 +206,10 @@ _SEMANTIC_EQUIVALENTS: Dict[str, List[str]] = {
     ],
     "佁然": [
         "鱼儿静止不动", "静止不动", "呆呆地不动",
+        "一动不动", "安闲自在一动不动", "鱼儿们在水底下安闲自在一动不动",
     ],
     "俶尔": [
-        "忽然", "忽然游向远方", "忽然向远处游去",
+        "忽然", "突然", "忽然游向远方", "忽然向远处游去", "突然游动", "突然游向远方",
     ],
     "翕忽": [
         "来去疾速", "疾速", "来去快速", "来来往往快速",
@@ -208,6 +224,9 @@ _SEMANTIC_EQUIVALENTS: Dict[str, List[str]] = {
     ],
     "蛇行": [
         "如长蛇一般弯曲", "像蛇蜿蜒前行", "如蛇一般弯曲",
+    ],
+    "西南": [
+        "向西南", "往西南", "西南方看去", "向小潭的西南方",
     ],
     "明灭可见": [
         "时而隐藏时而显现", "忽明忽暗", "时隐时现",
@@ -243,6 +262,9 @@ _SEMANTIC_EQUIVALENTS: Dict[str, List[str]] = {
     ],
     "居": [
         "久留", "停留", "久住",
+    ],
+    "去": [
+        "离开", "离去了", "走了",
     ],
     "乃": [
         "于是", "就", "便",
@@ -287,7 +309,7 @@ _COMMON_TEACHER_RULES = [
 ]
 
 _COMMON_TEXT_ERRORS = [
-    ("人身上的佩环", "佩环", "佩环：腰间的玉佩和玉环相碰撞", 2),
+    ("佩环", "腰间的玉佩和玉环相碰撞", "佩环：腰间的玉佩和玉环相碰撞", 2),
     ("藤曼", "藤蔓", "不规范字：藤", 1),
     ("腾蔓", "藤蔓", "不规范字：藤", 1),
     ("飘浮", "飘拂", "错字：飘拂", 1),
@@ -314,17 +336,17 @@ _STANDARD_SENTENCES = [
     {
         "classical": "全石以为底，近岸卷石底以出，为坻，为屿，为嵁，为岩。",
         "translation": "潭以整块石头为底，靠近岸边石底翻卷过来露出水面，成为坻、屿、嵁、岩各种形态。",
-        "keywords": ["全石以为底", "卷石底以出", "为坻", "为嵁"],
+        "keywords": ["全石以为底", "以为", "卷石底以出", "为坻", "为嵁"],
     },
     {
         "classical": "青树翠蔓，蒙络摇缀，参差披拂。",
         "translation": "青葱的树木翠绿的藤蔓，蒙盖缠绕摇曳牵连，参差不齐随风飘拂。",
-        "keywords": ["翠蔓", "披拂"],
+        "keywords": ["翠蔓", "蒙络", "摇缀", "披拂"],
     },
     {
         "classical": "潭中鱼可百许头，皆若空游无所依。",
         "translation": "潭中鱼大约有一百来条，都好像在空中游动没有什么依托。",
-        "keywords": ["可", "许", "无所依"],
+        "keywords": ["可", "许", "空游", "无所依"],
     },
     {
         "classical": "日光下澈，影布石上。佁然不动，俶尔远逝，往来翕忽，似与游者相乐。",
@@ -334,7 +356,7 @@ _STANDARD_SENTENCES = [
     {
         "classical": "潭西南而望，斗折蛇行，明灭可见。",
         "translation": "向石潭的西南方向望去，溪流像北斗星那样曲折，像蛇那样蜿蜒前行，忽明忽暗。",
-        "keywords": ["斗折", "蛇行", "明灭可见"],
+        "keywords": ["西南", "斗折", "蛇行", "明灭可见"],
     },
     {
         "classical": "其岸势犬牙差互，不可知其源。",
@@ -349,7 +371,7 @@ _STANDARD_SENTENCES = [
     {
         "classical": "以其境过清，不可久居，乃记之而去。",
         "translation": "因为这里的环境太冷清，不能久留，于是记下这番景致就离开了。",
-        "keywords": ["以", "过清", "居", "乃"],
+        "keywords": ["以", "过清", "居", "乃", "去"],
     },
     {
         "classical": "同游者：吴武陵，龚古，余弟宗玄。隶而从者，崔氏二小生：曰恕己，曰奉壹。",
@@ -421,6 +443,123 @@ class RuleEngine:
 
     def __init__(self, standard_sentences: List[dict] = None):
         self.standard_sentences = standard_sentences or _STANDARD_SENTENCES
+
+    def grade_aligned_segments(self, aligned_segments: List[object]) -> List[SentenceAnalysis]:
+        """基于任务标准对齐结果批改，不依赖固定 OCR 行数或标点分句。"""
+        analyses = []
+        for idx, aligned in enumerate(aligned_segments):
+            segment = aligned.segment
+            stu_text = aligned.student_text or ""
+            std_text = segment.reference
+            sim = getattr(aligned, "confidence", 0.0) or 0.0
+
+            if not stu_text:
+                analyses.append(SentenceAnalysis(
+                    original_classical=segment.source,
+                    student_translation="（未识别到此单元作答）",
+                    standard_translation=std_text,
+                    errors=[],
+                    sentence_score=100,
+                    is_excellent=False,
+                    bbox=None,
+                ))
+                continue
+
+            prev_text = analyses[-1].student_translation if analyses else ""
+            errors = self._dedupe_errors(
+                self.detect_errors(stu_text, std_text, segment.keywords, idx)
+                + self.detect_teacher_style_errors(idx, stu_text, prev_text)
+            )
+            errors = self._filter_partial_segment_errors(errors, aligned)
+
+            deductions = sum(e.deduction_points for e in errors)
+            sent_score = max(0, 100 - deductions * 2)
+            is_excellent = (len(errors) == 0 and sim >= 0.28 and len(stu_text) > 10)
+
+            analyses.append(SentenceAnalysis(
+                original_classical=segment.source,
+                student_translation=stu_text,
+                standard_translation=std_text,
+                errors=errors,
+                sentence_score=sent_score,
+                is_excellent=is_excellent,
+                is_highlight=False,
+                highlight_comment="",
+                bbox=getattr(aligned, "bbox", None),
+            ))
+
+        analyses = self._filter_cross_segment_false_positives(analyses)
+        return self._detect_highlights(analyses)
+
+    def _filter_cross_segment_false_positives(self, analyses: List[SentenceAnalysis]) -> List[SentenceAnalysis]:
+        all_student = _clean_text("".join(sa.student_translation or "" for sa in analyses))
+        for sa in analyses:
+            kept = []
+            for err in sa.errors:
+                text = f"{err.original_text}{err.correct_text}{err.reason}"
+                if "心乐之" in text and any(k in all_student for k in ["开心", "高兴", "快乐"]):
+                    continue
+                if "俶尔" in text and any(k in all_student for k in ["突然", "忽然"]):
+                    continue
+                kept.append(err)
+            sa.errors = kept
+        return analyses
+
+    def _filter_partial_segment_errors(self, errors: List[ErrorItem], aligned: object) -> List[ErrorItem]:
+        """跨页/局部上传时，抑制不可证明的前置漏译，减少多标。"""
+        if not errors:
+            return []
+
+        confidence = getattr(aligned, "confidence", 0.0) or 0.0
+        coverage = getattr(aligned, "coverage_ratio", 0.0) or 0.0
+        visible_start = getattr(aligned, "visible_reference_start", None)
+        visible_end = getattr(aligned, "visible_reference_end", None)
+        reference = _clean_text(getattr(getattr(aligned, "segment", None), "reference", "") or "")
+
+        filtered = []
+        for err in errors:
+            if err.error_type != ErrorType.OMISSION:
+                filtered.append(err)
+                continue
+            if self._is_teacher_style_subject_error(err):
+                filtered.append(err)
+                continue
+
+            if confidence < 0.24 or coverage < 0.28:
+                # 低置信/低覆盖单元中的漏译多半来自图片截断，不直接画成问题。
+                continue
+
+            if visible_start is not None and reference:
+                err_pos = self._error_reference_position(err, reference)
+                if err_pos is not None and err_pos + 2 < visible_start:
+                    continue
+                if visible_end is not None and err_pos is not None and err_pos > visible_end + 2:
+                    continue
+
+            filtered.append(err)
+        return filtered
+
+    def _is_teacher_style_subject_error(self, err: ErrorItem) -> bool:
+        text = f"{err.original_text}{err.correct_text}{err.reason}"
+        return "补主语" in text or "补充主语" in text
+
+    def _error_reference_position(self, err: ErrorItem, reference_clean: str) -> int:
+        candidates = [
+            _clean_text(err.correct_text or ""),
+            _clean_text(err.original_text or ""),
+        ]
+        for candidate in candidates:
+            if not candidate:
+                continue
+            pos = reference_clean.find(candidate)
+            if pos >= 0:
+                return pos
+            if len(candidate) > 4:
+                for frag in (candidate[:2], candidate[-2:]):
+                    pos = reference_clean.find(frag)
+                    if pos >= 0:
+                        return pos
+        return None
 
     def split_student_text(self, text: str) -> List[str]:
         """
@@ -543,6 +682,8 @@ class RuleEngine:
                     break
 
             if found_error_form:
+                if kw == "佁然" and self._looks_like_chuer_translation(student_text, found_error_form):
+                    continue
                 errors.append(ErrorItem(
                     error_type=rule["type"],
                     original_text=found_error_form,
@@ -594,6 +735,22 @@ class RuleEngine:
                 seen[key] = e
         return list(seen.values())
 
+    def _looks_like_chuer_translation(self, student_text: str, found_error_form: str) -> bool:
+        """“突然/忽然”常用于翻译俶尔，不应错判成佁然错误。"""
+        student_clean = _clean_text(student_text)
+        marker = _clean_text(found_error_form)
+        if marker not in student_clean:
+            return False
+        still_markers = ["一动不动", "静止不动", "安闲自在", "呆呆地"]
+        has_yiran = any(_clean_text(item) in student_clean for item in still_markers)
+        if not has_yiran:
+            return False
+        return student_clean.find(marker) > min(
+            student_clean.find(_clean_text(item))
+            for item in still_markers
+            if _clean_text(item) in student_clean
+        )
+
     def _has_teacher_style_correction_for_keyword(self, keyword: str, student_text: str) -> bool:
         student_clean = _clean_text(student_text)
         for wrong, correct, _, _ in _COMMON_TEXT_ERRORS:
@@ -601,15 +758,19 @@ class RuleEngine:
                 return True
         return False
 
-    def detect_teacher_style_errors(self, sentence_index: int, student_text: str) -> List[ErrorItem]:
+    def detect_teacher_style_errors(self, sentence_index: int, student_text: str, previous_text: str = "") -> List[ErrorItem]:
         """补充老师实批中高频、规则表不易覆盖的旁批点。"""
         errors = []
         student_clean = _clean_text(student_text)
+        previous_tail = _clean_text(previous_text)[-8:]
 
         for rule in _COMMON_TEACHER_RULES:
             if rule["sentence_index"] != sentence_index:
                 continue
-            if rule["kind"] == "missing_subject" and not any(_clean_text(x) in student_clean for x in rule["required_absent"]):
+            subject_context = student_clean
+            if sentence_index == 1:
+                subject_context = previous_tail + student_clean
+            if rule["kind"] == "missing_subject" and not any(_clean_text(x) in subject_context for x in rule["required_absent"]):
                 errors.append(ErrorItem(
                     error_type=ErrorType.OMISSION,
                     original_text=rule["correct_text"],
@@ -717,6 +878,10 @@ class RuleEngine:
             if key not in seen or e.deduction_points > seen[key].deduction_points:
                 seen[key] = e
         return list(seen.values())
+
+    def _is_locatable_error(self, err: ErrorItem, student_text: str) -> bool:
+        text = _clean_text(student_text)
+        return bool(_clean_text(err.original_text) and _clean_text(err.original_text) in text)
 
     def _detect_highlights(self, analyses: List[SentenceAnalysis]) -> List[SentenceAnalysis]:
         """基于规则识别点睛句，按《小石潭记批改要求》的8句必标库"""

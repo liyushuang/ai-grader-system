@@ -30,6 +30,7 @@ class AnnotationType(str, Enum):
     """符号标注类型"""
     WAVY = "wavy"        # 波浪线 — 精彩句
     LINE = "line"        # 横线 — 问题句
+    CIRCLE = "circle"    # 圆圈 — 错字/错词
     STAR = "star"        # 星星 — 点睛句
 
 

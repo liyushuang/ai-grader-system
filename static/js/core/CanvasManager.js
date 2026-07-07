@@ -11,6 +11,7 @@ class CanvasManager {
         this.drawStartX = 0;
         this.drawStartY = 0;
         this.drawPreview = null;
+        this.viewportPadding = 10;
     }
 
     /**
@@ -84,8 +85,8 @@ class CanvasManager {
                 this.fabric.renderAll();
                 this.zoom = scale;
                 
-                // 居中画布
-                this.fabric.viewportTransform = [1, 0, 0, 1, 10, 10];
+                // 只用 viewport 负责图片和标注的统一外边距，避免标注坐标重复偏移。
+                this.fabric.viewportTransform = [1, 0, 0, 1, this.viewportPadding, this.viewportPadding];
                 this.fabric.renderAll();
                 
                 this._updateStatusBar();
@@ -118,22 +119,43 @@ class CanvasManager {
         this._updateStatusBar();
     }
 
-    _getDisplayYOffset(ann) {
-        return ann && ann.type !== 'star' ? 12 : 0;
+    _imageToSceneCoords(x, y) {
+        return {
+            x: x * this.zoom,
+            y: y * this.zoom,
+        };
+    }
+
+    _sceneToImageCoords(sceneX, sceneY) {
+        return {
+            x: Math.round(sceneX / this.zoom),
+            y: Math.round(sceneY / this.zoom),
+        };
+    }
+
+    _screenToImageCoords(screenX, screenY) {
+        const vt = this.fabric?.viewportTransform || [1, 0, 0, 1, 0, 0];
+        return {
+            x: Math.round((screenX - vt[4]) / this.zoom),
+            y: Math.round((screenY - vt[5]) / this.zoom),
+        };
+    }
+
+    _getDisplayYOffset(_ann) {
+        return 0;
     }
 
     /**
      * 创建单个标注的 Fabric 对象
-     * 横线/波浪线在画布显示层固定下移，避免低缩放时压住文字；星标不偏移。
+     * 后端坐标已经是原图上的最终标注位置，前端只做缩放映射。
      */
     _createAnnotationObject(ann, index = null) {
-        const scale = this.zoom;
-        const padding = 10;
-        const fixedYOffset = this._getDisplayYOffset(ann);
-        const sx1 = ann.startX * scale + padding;
-        const sy1 = ann.startY * scale + padding + fixedYOffset;
-        const sx2 = ann.endX * scale + padding;
-        const sy2 = ann.endY * scale + padding + fixedYOffset;
+        const p1 = this._imageToSceneCoords(ann.startX, ann.startY);
+        const p2 = this._imageToSceneCoords(ann.endX, ann.endY);
+        const sx1 = p1.x;
+        const sy1 = p1.y;
+        const sx2 = p2.x;
+        const sy2 = p2.y;
 
         let obj = null;
         switch (ann.type) {
@@ -142,6 +164,9 @@ class CanvasManager {
                 break;
             case 'line':
                 obj = StraightLine.create(sx1, sy1, sx2, sy2);
+                break;
+            case 'circle':
+                obj = CircleAnnotation.create(sx1, sy1, sx2, sy2);
                 break;
             case 'star':
                 obj = StarAnnotation.create(sx1, sy1);
@@ -226,18 +251,19 @@ class CanvasManager {
         const oldObj = this.fabric.getObjects().find(o => o.annId === ann.id);
         if (!oldObj) return;
         
-        const scale = this.zoom;
-        const sx1 = ann.startX * scale + 10;
-        const fixedYOffset = this._getDisplayYOffset(ann);
-        const sy1 = ann.startY * scale + 10 + fixedYOffset;
-        const sx2 = ann.endX * scale + 10;
-        const sy2 = ann.endY * scale + 10 + fixedYOffset;
+        const p1 = this._imageToSceneCoords(ann.startX, ann.startY);
+        const p2 = this._imageToSceneCoords(ann.endX, ann.endY);
+        const sx1 = p1.x;
+        const sy1 = p1.y;
+        const sx2 = p2.x;
+        const sy2 = p2.y;
 
         let newObj = null;
         const index = window.annotationStore ? window.annotationStore.getAll().findIndex(a => a.id === ann.id) + 1 : null;
         switch (ann.type) {
             case 'wavy': newObj = WavyLine.create(sx1, sy1, sx2, sy2); break;
             case 'line': newObj = StraightLine.create(sx1, sy1, sx2, sy2); break;
+            case 'circle': newObj = CircleAnnotation.create(sx1, sy1, sx2, sy2); break;
             case 'star': newObj = StarAnnotation.create(sx1, sy1); break;
         }
 
@@ -276,10 +302,7 @@ class CanvasManager {
      * 根据Canvas坐标反算原图坐标
      */
     canvasToImageCoords(canvasX, canvasY) {
-        return {
-            x: Math.round((canvasX - 10) / this.zoom),
-            y: Math.round((canvasY - 10) / this.zoom),
-        };
+        return this._sceneToImageCoords(canvasX, canvasY);
     }
 
     /**
@@ -323,7 +346,7 @@ class CanvasManager {
         // 更新坐标状态栏
         this.canvasEl.addEventListener('mousemove', (e) => {
             const rect = this.canvasEl.getBoundingClientRect();
-            const imgCoords = this.canvasToImageCoords(e.clientX - rect.left, e.clientY - rect.top);
+            const imgCoords = this._screenToImageCoords(e.clientX - rect.left, e.clientY - rect.top);
             document.getElementById('statusCoords').textContent = 
                 `坐标: (${imgCoords.x}, ${imgCoords.y})`;
         });
@@ -363,6 +386,22 @@ class CanvasManager {
                     { stroke: '#EF4444', strokeWidth: 2, strokeDashArray: dashPattern, selectable: false, evented: false }
                 );
                 break;
+            case 'circle':
+                this.drawPreview = new fabric.Ellipse({
+                    left: Math.min(this.drawStartX, pointer.x),
+                    top: Math.min(this.drawStartY, pointer.y),
+                    rx: Math.max(6, Math.abs(pointer.x - this.drawStartX) / 2),
+                    ry: Math.max(6, Math.abs(pointer.y - this.drawStartY) / 2),
+                    originX: 'left',
+                    originY: 'top',
+                    fill: 'rgba(239,68,68,0.04)',
+                    stroke: '#EF4444',
+                    strokeWidth: 2,
+                    strokeDashArray: dashPattern,
+                    selectable: false,
+                    evented: false,
+                });
+                break;
             case 'star':
                 this.drawPreview = new fabric.Circle({
                     left: pointer.x - 10, top: pointer.y - 10,
@@ -395,7 +434,7 @@ class CanvasManager {
         const dist = Math.sqrt(dx * dx + dy * dy);
 
         // 最小距离阈值（防止误点）
-        if (currentTool === 'star' ? dist < 5 : dist < 15) {
+        if (currentTool === 'star' ? dist < 5 : dist < 12) {
             this.fabric.renderAll();
             return;
         }
@@ -452,14 +491,14 @@ class CanvasManager {
 
     /** 设置发光效果 */
     _setGlow(group, active) {
-        const glowObj = group._glowPath || group._glowLine || group._glowPoly;
+        const glowObj = group._glowPath || group._glowLine || group._glowPoly || group._glowCircle;
         if (glowObj) {
             glowObj.set({ visible: active });
         }
         if (active) {
             group.set({ borderColor: '#4a90d9', borderScaleFactor: 1.2 });
         } else {
-            const colors = { wavy: '#10B981', line: '#EF4444', star: '#F59E0B' };
+            const colors = { wavy: '#10B981', line: '#EF4444', circle: '#EF4444', star: '#F59E0B' };
             group.set({ borderColor: colors[group.annotationType] || '#333', borderScaleFactor: 1 });
         }
         this.fabric.renderAll();
@@ -474,9 +513,8 @@ class CanvasManager {
 
         // 获取新位置（通过 getBoundingRect）
         const bounds = obj.getBoundingRect();
-        const displayYOffset = this._getDisplayYOffset(ann);
-        const imgCoords1 = this.canvasToImageCoords(bounds.left, bounds.top - displayYOffset);
-        const imgCoords2 = this.canvasToImageCoords(bounds.left + bounds.width, bounds.top + bounds.height - displayYOffset);
+        const imgCoords1 = this.canvasToImageCoords(bounds.left, bounds.top);
+        const imgCoords2 = this.canvasToImageCoords(bounds.left + bounds.width, bounds.top + bounds.height);
 
         const oldData = {
             startX: ann.startX, startY: ann.startY,
@@ -555,6 +593,10 @@ class CanvasManager {
             case 'l':
             case 'L':
                 setTool('line');
+                break;
+            case 'c':
+            case 'C':
+                setTool('circle');
                 break;
             case 's':
             case 'S':
