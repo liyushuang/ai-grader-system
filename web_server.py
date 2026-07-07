@@ -841,6 +841,10 @@ def grade_stream():
     def generate():
         try:
             grader = get_grader(grader_name)
+            ok, msg = grader.validate()
+            if not ok:
+                yield f"data: {json.dumps({'type': 'error', 'message': f'策略不可用: {msg}'}, ensure_ascii=False)}\n\n"
+                return
 
             # 检查是否支持流式
             if not hasattr(grader, 'grade_stream'):
