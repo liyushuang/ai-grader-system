@@ -11,11 +11,11 @@ function setTool(tool) {
     currentTool = tool;
     
     // 更新工具栏按钮状态
-    ['toolSelect', 'toolWavy', 'toolLine', 'toolCircle', 'toolStar'].forEach(id => {
-        document.getElementById(id).classList.remove('active');
+    ['toolSelect', 'toolWavy', 'toolLine', 'toolCircle'].forEach(id => {
+        document.getElementById(id)?.classList.remove('active');
     });
     
-    const btnMap = { select: 'toolSelect', wavy: 'toolWavy', line: 'toolLine', circle: 'toolCircle', star: 'toolStar' };
+    const btnMap = { select: 'toolSelect', wavy: 'toolWavy', line: 'toolLine', circle: 'toolCircle' };
     if (btnMap[tool]) {
         document.getElementById(btnMap[tool]).classList.add('active');
     }
@@ -313,6 +313,18 @@ let llmOutputBuffer = '';  // LLM流式输出缓冲
 let stageLogBuffer = '';  // 阶段进度日志缓冲
 let gradingFailures = [];  // 批改失败原因
 
+function isFusionPipeline(grader) {
+    return grader === 'fusion' || grader === 'ark_code';
+}
+
+function getGraderDisplayName(grader) {
+    const names = {
+        fusion: '千问 qwen3.6 无思考',
+        ark_code: '方舟 ark-code-latest',
+    };
+    return names[grader] || grader || '未知模型';
+}
+
 function handleFileSelect(input) {
     if (!input.files || input.files.length === 0) return;
     
@@ -324,7 +336,7 @@ function handleFileSelect(input) {
     document.getElementById('mainLayout')?.classList.add('empty');
     if (window.sidePanel) window.sidePanel.clearAllViews();
     // 融合批改用 thinking panel 展示进度，不需要 loading overlay
-    if (grader !== 'fusion') {
+    if (!isFusionPipeline(grader)) {
         document.getElementById('loadingOverlay').classList.add('show');
     }
     
@@ -334,9 +346,13 @@ function handleFileSelect(input) {
     const thinkingOutput = document.getElementById('thinkingOutput');
     const thinkingProgress = document.getElementById('thinkingProgress');
     const thinkingDoneBadge = document.getElementById('thinkingDoneBadge');
-    if (grader === 'fusion') {
+    const thinkingHeaderText = document.querySelector('#thinkingPanel .header-text');
+    if (isFusionPipeline(grader)) {
         thinkingPanel.classList.add('show');
         thinkingPanel.classList.remove('collapsed');
+        if (thinkingHeaderText) {
+            thinkingHeaderText.textContent = `AI 批改思考过程 · ${getGraderDisplayName(grader)}`;
+        }
         // 重置阶段标签状态（预渲染的标签只改样式，不重建DOM）
         const stageIcons = { ocr: '🔍', clean: '🧹', align: '🧭', rule: '📐', llm: '🧠', fuse: '🔗' };
         document.querySelectorAll('.thinking-stage').forEach(el => {
@@ -349,7 +365,8 @@ function handleFileSelect(input) {
         thinkingProgress.style.width = '0%';
         thinkingDoneBadge.classList.remove('show');
         llmOutputBuffer = '';
-        stageLogBuffer = '';
+        stageLogBuffer = `<div class="llm-status">• 当前模型：${escapeHtml(getGraderDisplayName(grader))}</div>`;
+        thinkingOutput.innerHTML = stageLogBuffer;
     }
     
     // 逐个批改
@@ -362,7 +379,7 @@ function handleFileSelect(input) {
         formData.append('grader', grader);
         
         // 融合方案用流式接口，其他用普通接口
-        if (grader === 'fusion' || grader === 'volcano') {
+        if (isFusionPipeline(grader)) {
             streamGrade(file, idx, grader, () => {
                 completed++;
                 onAllComplete(completed, total);
@@ -879,7 +896,7 @@ document.addEventListener('DOMContentLoaded', () => {
     
     // 初始化侧边面板
     if (window.sidePanel) window.sidePanel.init();
-    loadDemoSession();
+    if (window.__pageMode === 'demo') loadDemoSession();
     
     // 默认选中融合批改
     const fusionRadio = document.getElementById('graderFusion');

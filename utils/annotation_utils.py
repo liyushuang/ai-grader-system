@@ -2,9 +2,9 @@
 标注工具函数 — 从 GradingResult 自动生成符号标注数据
 
 规则:
-1. 横线：重点词误译、漏译、主语/句式问题、错字。
-2. 星标：点睛句/重点积累句。
-3. 波浪线：翻译准确、表达较好的句子。
+1. 横线：重点词误译、漏译、主语/句式问题。
+2. 圆圈：错字/不规范字。
+3. 波浪线：点睛句/重点积累句。
 4. 每张图最多 12 条，先按教学优先级筛选，再按图片阅读顺序编号。
 """
 
@@ -27,7 +27,6 @@ def generate_annotations_from_result(result: GradingResult) -> List[Annotation]:
     只保留老师式少量高价值旁批，避免把模型输出全量铺到画面上。
     """
     error_candidates: List[Tuple[int, int, SentenceAnalysis, ErrorItem]] = []
-    star_candidates: List[Tuple[int, SentenceAnalysis]] = []
     wave_candidates: List[Tuple[int, SentenceAnalysis]] = []
 
     for si, sa in enumerate(result.sentence_analyses):
@@ -37,8 +36,6 @@ def generate_annotations_from_result(result: GradingResult) -> List[Annotation]:
             if err.bbox and _is_canvas_worthy_error(err):
                 error_candidates.append((si, ei, sa, err))
         if sa.is_highlight and sa.bbox:
-            star_candidates.append((si, sa))
-        if sa.is_excellent and sa.bbox and not sa.errors:
             wave_candidates.append((si, sa))
 
     error_candidates = _dedupe_error_candidates(error_candidates)
@@ -56,24 +53,12 @@ def generate_annotations_from_result(result: GradingResult) -> List[Annotation]:
             "build": lambda si=si, ei=ei, err=err: _build_error_annotation(si, ei, err),
         })
 
-    for si, sa in star_candidates:
+    for si, sa in wave_candidates:
         if not sa.bbox:
             continue
         candidates.append({
             "priority": 70 + _highlight_priority(sa),
             "kind_rank": 1,
-            "si": si,
-            "ei": None,
-            "bbox": sa.bbox,
-            "build": lambda si=si, sa=sa: _build_star_annotation(si, sa),
-        })
-
-    for si, sa in wave_candidates:
-        if not sa.bbox:
-            continue
-        candidates.append({
-            "priority": 40 + _highlight_priority(sa),
-            "kind_rank": 2,
             "si": si,
             "ei": None,
             "bbox": sa.bbox,
@@ -145,22 +130,6 @@ def _should_circle_error(err: ErrorItem) -> bool:
     )
 
 
-def _build_star_annotation(si: int, sa: SentenceAnalysis) -> Annotation:
-    bbox = sa.bbox
-    return Annotation(
-        id="",
-        annotation_type=AnnotationType.STAR,
-        start_x=max(0, bbox.x1 - 16),
-        start_y=max(0, bbox.y1 + 12),
-        end_x=max(0, bbox.x1 - 16),
-        end_y=max(0, bbox.y1 + 12),
-        source=AnnotationSource.AI,
-        sentence_index=si,
-        error_index=None,
-        comment=_teacher_star_comment(sa),
-    )
-
-
 def _build_wave_annotation(si: int, sa: SentenceAnalysis) -> Annotation:
     bbox = sa.bbox
     y = _underline_y(bbox)
@@ -174,7 +143,7 @@ def _build_wave_annotation(si: int, sa: SentenceAnalysis) -> Annotation:
         source=AnnotationSource.AI,
         sentence_index=si,
         error_index=None,
-        comment=_teacher_wave_comment(sa),
+        comment=_teacher_highlight_comment(sa),
     )
 
 
@@ -280,19 +249,13 @@ def _teacher_error_comment(err: ErrorItem) -> str:
     return _clip_comment(f"需订正：{err.error_type.value}")
 
 
-def _teacher_star_comment(sa: SentenceAnalysis) -> str:
+def _teacher_highlight_comment(sa: SentenceAnalysis) -> str:
     if sa.highlight_comment:
         text = sa.highlight_comment
         if not text.startswith("点睛句"):
             text = f"点睛句：{text}"
         return _clip_comment(text, 30)
     return _clip_comment("点睛句：关键画面译得准", 30)
-
-
-def _teacher_wave_comment(sa: SentenceAnalysis) -> str:
-    if sa.highlight_comment:
-        return _clip_comment(sa.highlight_comment, 26)
-    return "好句：翻译准确流畅"
 
 
 def annotations_to_dict_list(annotations: List[Annotation]) -> List[dict]:

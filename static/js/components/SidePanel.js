@@ -90,7 +90,7 @@ class SidePanel {
 
             const iconMap = { wavy: ['∼', 'wavy'], line: ['—', 'line'], circle: ['○', 'circle'], star: ['★', 'star'] };
             const [icon, cls] = iconMap[ann.type] || ['?', 'line'];
-            const typeLabelMap = { wavy: '波浪线·精彩句', line: '横线·问题句', circle: '圆圈·错字词', star: '星星·点睛句' };
+            const typeLabelMap = { wavy: '波浪线·点睛句', line: '横线·纠错', circle: '圆圈·错字', star: '点睛句' };
             const typeLabel = typeLabelMap[ann.type] || ann.type;
             const sourceLabel = ann.source === 'ai' ? '🤖 AI' : '👤 教师';
 
@@ -176,7 +176,7 @@ class SidePanel {
             };
             
             const iconMap = { wavy: '∼', line: '—', circle: '○', star: '★' };
-            const typeLabelMap = { wavy: '精彩', line: '纠错', circle: '错字', star: '点睛' };
+            const typeLabelMap = { wavy: '点睛', line: '纠错', circle: '错字', star: '点睛' };
             const icon = iconMap[ann.type] || '?';
             const typeLabel = typeLabelMap[ann.type] || ann.type;
             const sourceLabel = ann.source === 'ai' ? '🤖 AI' : '👤 教师';

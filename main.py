@@ -25,7 +25,10 @@ sys.path.insert(0, str(PROJECT_ROOT))
 sys.path.insert(0, str(PROJECT_ROOT / "graders"))
 sys.path.insert(0, str(PROJECT_ROOT / "renderers"))
 
+from utils.env_loader import load_local_env
 from grader_base import GradingInput, GradingResult
+
+load_local_env(PROJECT_ROOT)
 
 
 def get_grader(name: str):
@@ -67,25 +70,27 @@ def get_grader(name: str):
             llm_provider="qwen",
         )
     
-    elif name_lower in ("volcano", "火山", "ark", "doubao", "豆包"):
+    elif name_lower in ("ark_code", "ark-code", "ark", "方舟", "方舟新模型"):
         from fusion_grader import FusionGrader
         dashscope_key = os.environ.get("DASHSCOPE_API_KEY", "")
         baidu_key = os.environ.get("BAIDU_API_KEY", "")
         baidu_secret = os.environ.get("BAIDU_SECRET_KEY", "")
-        volcano_key = os.environ.get("VOLCANO_API_KEY", "")
-        if not volcano_key:
-            print("⚠️ 警告: VOLCANO_API_KEY 环境变量未设置，火山引擎将无法调用")
-            print("   请设置: export VOLCANO_API_KEY='ark-xxx'")
+        ark_key = os.environ.get("ARK_API_KEY", "")
+        if not ark_key:
+            print("⚠️ 警告: ARK_API_KEY 环境变量未设置，方舟新模型将无法调用")
+            print("   请设置: export ARK_API_KEY='你的方舟专属API Key'")
         return FusionGrader(
             dashscope_api_key=dashscope_key,
             baidu_api_key=baidu_key,
             baidu_secret_key=baidu_secret,
-            volcano_api_key=volcano_key,
-            llm_provider="volcano",
+            ark_api_key=ark_key,
+            ark_base_url=os.environ.get("ARK_BASE_URL", "https://ark.cn-beijing.volces.com/api/v3"),
+            llm_provider="ark",
+            model=os.environ.get("ARK_MODEL", "ark-code-latest"),
         )
     
     else:
-        raise ValueError(f"不支持的批改策略: {name}。可用: mock, qwen, baidu, fusion, volcano")
+        raise ValueError(f"不支持的批改策略: {name}。可用: mock, qwen, baidu, fusion, ark_code")
 
 
 def run_grading(image_path: str, grader_name: str, output_path: str = None):

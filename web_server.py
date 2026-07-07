@@ -35,8 +35,10 @@ if not os.environ.get("BAIDU_SECRET_KEY"):
     os.environ["BAIDU_SECRET_KEY"] = "bmCwZukpPIUxAvssGdS12m9ITj5UhWod"
 if not os.environ.get("DASHSCOPE_API_KEY"):
     os.environ["DASHSCOPE_API_KEY"] = "sk-ws-H.EMDIIYR.jtU9.MEQCIDg63k7FDifjcSOhZIrLlfmhEyb7or87x8Ka3ljuyrKFAiA9kSj93j6TJaUlazt1R_IS1QC-DWan69IoLEyeIbaZhw"
-if not os.environ.get("VOLCANO_API_KEY"):
-    os.environ["VOLCANO_API_KEY"] = "ark-ddbae8e5-c1ad-4200-8b1d-b8483adca0c6-9eda7"
+if not os.environ.get("ARK_BASE_URL"):
+    os.environ["ARK_BASE_URL"] = "https://ark.cn-beijing.volces.com/api/v3"
+if not os.environ.get("ARK_MODEL"):
+    os.environ["ARK_MODEL"] = "ark-code-latest"
 
 app = Flask(__name__)
 
@@ -597,10 +599,9 @@ HTML_TEMPLATE = """
         <div class="toolbar" id="toolbar">
             <button class="tool-btn" data-tooltip="选择/移动 (V)" id="toolSelect" onclick="setTool('select')">🖱️</button>
             <div class="tool-separator"></div>
-            <button class="tool-btn" data-tooltip="波浪线 — 精彩句 (W)" id="toolWavy" onclick="setTool('wavy')" style="color:#059669;">∼</button>
+            <button class="tool-btn" data-tooltip="波浪线 — 点睛句 (W)" id="toolWavy" onclick="setTool('wavy')" style="color:#059669;">∼</button>
             <button class="tool-btn" data-tooltip="横线 — 问题句 (L)" id="toolLine" onclick="setTool('line')" style="color:#dc2626;">—</button>
             <button class="tool-btn" data-tooltip="圆圈 — 错字词 (C)" id="toolCircle" onclick="setTool('circle')" style="color:#dc2626;">○</button>
-            <button class="tool-btn" data-tooltip="★ 星星 — 点睛句 (S)" id="toolStar" onclick="setTool('star')" style="color:#d97706;">★</button>
             <div class="tool-separator"></div>
             <button class="tool-btn" data-tooltip="删除选中 (Del)" onclick="deleteSelected()">🗑️</button>
             <div class="tool-separator"></div>
@@ -620,11 +621,11 @@ HTML_TEMPLATE = """
                         <div class="grader-options">
                             <div class="grader-option">
                                 <input type="radio" id="graderFusion" name="grader" value="fusion" checked>
-                                <label for="graderFusion">千问（推荐·OCR+规则+文本复核）</label>
+                                <label for="graderFusion">千问（推荐·qwen3.6无思考）</label>
                             </div>
                             <div class="grader-option">
-                                <input type="radio" id="graderVolcano" name="grader" value="volcano">
-                                <label for="graderVolcano">火山</label>
+                                <input type="radio" id="graderArkCode" name="grader" value="ark_code">
+                                <label for="graderArkCode">方舟新模型（ark-code-latest）</label>
                             </div>
                             <div class="grader-option">
                                 <input type="radio" id="graderQwen" name="grader" value="qwen">
@@ -699,10 +700,9 @@ HTML_TEMPLATE = """
             </div>
             <label>标注类型</label>
             <select id="editType" onchange="onEditTypeChange()">
-                <option value="wavy">～～ 波浪线（精彩句）</option>
+                <option value="wavy">～～ 波浪线（点睛句）</option>
                 <option value="line">—— 横线（问题句）</option>
                 <option value="circle">○ 圆圈（错字词）</option>
-                <option value="star">★ 星星（点睛句）</option>
             </select>
             <label>批注文字</label>
             <textarea id="editComment" placeholder="输入批注说明..."></textarea>
@@ -719,7 +719,6 @@ HTML_TEMPLATE = """
         <div class="menu-item" onclick="contextSwitchType('wavy')">～～ 改为波浪线</div>
         <div class="menu-item" onclick="contextSwitchType('line')">—— 改为横线</div>
         <div class="menu-item" onclick="contextSwitchType('circle')">○ 改为圆圈</div>
-        <div class="menu-item" onclick="contextSwitchType('star')">★ 改为星星</div>
         <div class="menu-divider"></div>
         <div class="menu-item danger" onclick="deleteSelected()">🗑️ 删除</div>
     </div>
@@ -768,6 +767,7 @@ HTML_TEMPLATE = """
     {% if demo_json %}
     window.__demoSession = {{ demo_json | safe }};
     {% endif %}
+    window.__pageMode = {{ (page_mode | default("upload")) | tojson }};
     </script>
     
     <script src="/static/js/core/UndoManager.js"></script>
@@ -788,7 +788,7 @@ HTML_TEMPLATE = """
 @app.route("/")
 def index():
     """首页"""
-    return render_template_string(HTML_TEMPLATE)
+    return render_template_string(HTML_TEMPLATE, page_mode="upload")
 
 
 @app.route("/demo")
@@ -798,6 +798,7 @@ def demo():
     return render_template_string(
         HTML_TEMPLATE,
         demo_json=json.dumps(demo_data, ensure_ascii=False),
+        page_mode="demo",
     )
 
 

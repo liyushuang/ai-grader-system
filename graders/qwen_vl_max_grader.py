@@ -38,6 +38,7 @@ class QwenVLMaxGrader(GradingStrategy):
         max_tokens: int = 8192,
         max_retries: int = 1,
         timeout_seconds: int = 600,
+        enable_thinking: bool = False,
     ):
         self.api_key = api_key or os.environ.get("DASHSCOPE_API_KEY", "")
         self.base_url = base_url
@@ -46,6 +47,7 @@ class QwenVLMaxGrader(GradingStrategy):
         self.max_tokens = max_tokens
         self.max_retries = max_retries
         self.timeout_seconds = timeout_seconds
+        self.enable_thinking = enable_thinking
 
     # ── 接口属性 ──────────────────────────────────────
 
@@ -261,6 +263,12 @@ class QwenVLMaxGrader(GradingStrategy):
 
     # ── API 调用 ──────────────────────────────────────
 
+    def _api_extra_body(self) -> dict:
+        model = (self.model or "").lower()
+        if "qwen3" in model or "qwen-3" in model:
+            return {"enable_thinking": bool(self.enable_thinking)}
+        return {}
+
     def _call_api(self, system_prompt: str, user_content: list) -> Tuple[str, dict]:
         """调用 DashScope API，返回 (原始响应文本, token用量)"""
         import time as _time
@@ -276,15 +284,19 @@ class QwenVLMaxGrader(GradingStrategy):
                     timeout=self.timeout_seconds,
                 )
 
-                response = client.chat.completions.create(
-                    model=self.model,
-                    messages=[
+                request_kwargs = {
+                    "model": self.model,
+                    "messages": [
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": user_content},
                     ],
-                    temperature=self.temperature,
-                    max_tokens=self.max_tokens,
-                )
+                    "temperature": self.temperature,
+                    "max_tokens": self.max_tokens,
+                }
+                extra_body = self._api_extra_body()
+                if extra_body:
+                    request_kwargs["extra_body"] = extra_body
+                response = client.chat.completions.create(**request_kwargs)
 
                 raw = response.choices[0].message.content
                 usage = {
@@ -325,17 +337,21 @@ class QwenVLMaxGrader(GradingStrategy):
                     timeout=self.timeout_seconds,
                 )
 
-                response = client.chat.completions.create(
-                    model=self.model,
-                    messages=[
+                request_kwargs = {
+                    "model": self.model,
+                    "messages": [
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": user_content},
                     ],
-                    temperature=self.temperature,
-                    max_tokens=self.max_tokens,
-                    stream=True,
-                    stream_options={"include_usage": True},
-                )
+                    "temperature": self.temperature,
+                    "max_tokens": self.max_tokens,
+                    "stream": True,
+                    "stream_options": {"include_usage": True},
+                }
+                extra_body = self._api_extra_body()
+                if extra_body:
+                    request_kwargs["extra_body"] = extra_body
+                response = client.chat.completions.create(**request_kwargs)
 
                 full_text = ""
                 usage = {}

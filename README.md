@@ -1,163 +1,149 @@
-# AI 批改功能 PoC 框架
+# AI 批改 PoC - 标注编辑器
 
-> **最小功能闭环**：上传图片 → 选择批改策略 → 查看批改完成图 + JSON报告
+面向语文作业图片的批改与标注工具。当前重点验证《小石潭记》文言文翻译批改链路：上传学生作业图片后，系统完成 OCR、规则初判、模型复核、坐标回填和批改报告生成。
+
+## 当前能力
+
+- 上传学生作业图片，默认进入上传页。
+- 支持样式 Demo 页面：`/demo`。
+- 支持两套文本模型入口：
+  - `千问（推荐）`：百度 OCR + 规则初判 + Qwen 文本模型复核。
+  - `方舟新模型`：复用同一套流程，只切换为方舟模型。
+- 自动生成三类标注：
+  - 点睛：绿色波浪线。
+  - 纠错：红色直线。
+  - 错字：红色圆圈。
+- 批改报告包含：
+  - 详细点评。
+  - 教师总评：通用 / 鼓励 / 指导。
+  - 订正建议。
+  - 优秀表达。
+  - 易错点。
+  - 连贯全文润色。
+- 报告字段由模型直接生成；模型失败或字段缺失时直接报错，不再用规则结果兜底冒充报告。
+
+## 批改流程
+
+```text
+图片
+  → 百度 OCR
+  → 文本清洗
+  → 动态任务标准对齐
+  → 规则初判
+  → 千问 / 方舟文本模型复核
+  → OCR 坐标回填标注
+  → 批改报告
+```
+
+坐标只来自 OCR 识别结果。模型只判断文本问题，不直接生成坐标。
 
 ## 项目结构
 
-```
-poc_grader/
-├── grader_base.py              # 抽象基类（所有策略的统一接口）
-├── main.py                     # CLI 入口（命令行一键批改）
-├── web_server.py               # Web 服务（浏览器上传查看）
-│
+```text
+.
+├── grader_base.py                  # 批改数据结构和策略基类
+├── main.py                         # CLI 入口
+├── web_server.py                   # Web 服务
 ├── graders/
-│   ├── mock_grader.py          # 模拟批改器（无需API，验证渲染）
-│   └── qwen_vl_max_grader.py  # Qwen-VL-Max 批改器（真实AI）
-│
-├── renderers/
-│   └── grading_renderer.py    # 仿截图样式渲染器（左图右评）
-│
-├── utils/
-│   └── generate_sample.py      # 生成模拟学生作业图片
-│
-├── output/                     # 输出目录
-│   ├── sample_homework.jpg     # 模拟作业图片（测试用）
-│   └── graded_result.jpg      # 批改完成图（示例）
-│
-└── tests/                      # 测试目录（待补充）
+│   ├── fusion_grader.py            # 当前主流程：OCR + 规则 + 文本模型
+│   ├── qwen_vl_max_grader.py       # OpenAI 兼容接口调用封装
+│   └── mock_grader.py              # Mock 策略
+├── static/js/                      # 标注编辑器前端
+├── utils/annotation_utils.py       # 自动标注生成
+├── test_data/                      # 测试图片
+└── output/                         # 本地输出目录
 ```
 
-## 快速开始
+## 环境变量
 
-### 方式1：命令行（CLI）
+不要把真实 Key 写进代码或提交到 GitHub。推荐使用 `.env` 或命令行环境变量。
 
 ```bash
-# 1. 进入项目目录
-cd /workspace/poc_grader
+export BAIDU_API_KEY="你的百度OCR Key"
+export BAIDU_SECRET_KEY="你的百度OCR Secret"
 
-# 2. Mock 模式（无需API，验证渲染效果）
-python3.11 main.py \
-  --image output/sample_homework.jpg \
-  --grader mock \
-  --output output/graded_result.jpg
+export DASHSCOPE_API_KEY="你的千问 Key"
+export FUSION_QWEN_MODEL="qwen3.6"
 
-# 3. Qwen-VL-Max 模式（需要 API Key）
-export DASHSCOPE_API_KEY="sk-xxx"
-python3.11 main.py \
-  --image output/sample_homework.jpg \
-  --grader qwen \
-  --output output/graded_result.jpg
+export ARK_API_KEY="你的方舟 Key"
+export ARK_MODEL="ark-code-latest"
+export ARK_BASE_URL="https://ark.cn-beijing.volces.com/api/v3"
 ```
 
-### 方式2：Web 服务（浏览器）
+说明：
+
+- `.env` 已在 `.gitignore` 中忽略。
+- 方舟入口默认使用 `ark-code-latest`。
+- 千问入口当前按 `qwen3.6` 配置，无思考模式。
+
+## 本地运行
 
 ```bash
-# 启动服务
-python3.11 web_server.py
+cd /Users/admin/Documents/语文作业批改/ai-grader-system
 
-# 访问 http://localhost:8080
-# 上传图片 → 自动批改 → 查看结果
+python3 -m venv .venv
+source .venv/bin/activate
+
+pip install -r requirements.txt  # 如果本地已有依赖可跳过
+
+PORT=8084 python web_server.py
 ```
 
-## 核心设计：策略模式（可插拔切换）
+访问：
 
-```python
-from main import get_grader
+- 上传批改页：[http://127.0.0.1:8084](http://127.0.0.1:8084)
+- 样式 Demo：[http://127.0.0.1:8084/demo](http://127.0.0.1:8084/demo)
 
-# 一行切换底层方案
-grader = get_grader("mock")   # 模拟数据
-grader = get_grader("qwen")   # Qwen-VL-Max
-# grader = get_grader("gemini")  # 未来扩展
-# grader = get_grader("baidu")   # 未来扩展
+## 命令行批改
 
-# 统一接口，无需关心底层实现
-result = grader.grade(grading_input)
+```bash
+python main.py \
+  --image test_data/dbj2483646-未点评习作-第1张.jpg \
+  --grader fusion \
+  --output output/graded_result.jpg
 ```
 
-### 统一接口定义
+方舟模型：
 
-所有批改策略必须实现 `GradingStrategy` 抽象基类：
-
-| 方法 | 说明 |
-|------|------|
-| `name` | 策略名称标识 |
-| `supports_bbox` | 是否支持坐标输出（Grounding） |
-| `grade(input)` | 执行批改，返回 `GradingResult` |
-| `validate()` | 验证策略可用性（API Key/网络） |
-
-### 统一数据结构
-
-```python
-GradingResult:
-  - recognized_text: str          # 识别到的学生文字
-  - sentence_analyses: List[SentenceAnalysis]  # 逐句分析
-  - total_score: int (0-100)      # 总分
-  - overall_comment: str           # 总评
-  - confidence: Confidence         # 高/中/低
-  - status: GradingStatus          # 成功/异常状态
-  - processing_time_ms: int        # 耗时
-  - grader_name: str               # 使用的引擎
+```bash
+python main.py \
+  --image test_data/dbj2483646-未点评习作-第1张.jpg \
+  --grader ark_code \
+  --output output/graded_result.jpg
 ```
 
-## 渲染效果
+## 测试数据
 
-仿截图样式：
-- **左侧（60%）**：原图 + 红色圆圈标注错误位置 + 蓝色序号标签
-- **右侧（40%）**：详细点评列表（序号对应）+ 错误类型 + 判定理由 + 扣分
-- **底部**：大号红色分数 + 总评 + 置信度 + 耗时
+`test_data/` 中包含未点评图和已点评图：
 
-## 扩展新策略
+- 未点评图：作为正式批改输入。
+- 已点评图：只作为老师标注对照，不应作为批改输入，避免老师红字污染 OCR。
 
-要接入新的批改方案（如 Gemini、百度API），只需：
+当前测试重点：
 
-1. 在 `graders/` 下新建文件（如 `gemini_grader.py`）
-2. 继承 `GradingStrategy` 抽象基类
-3. 实现 `grade()` 方法，返回 `GradingResult`
-4. 在 `main.py` 的 `get_grader()` 中注册
+- 定位是否贴合 OCR 字词。
+- 序号是否与右侧点评卡片一致。
+- 点睛 / 纠错 / 圆圈错字是否符合老师标注习惯。
+- 报告内容是否只围绕当前上传图片。
+- 千问和方舟在同一流程下的效果差异。
 
-```python
-# graders/gemini_grader.py
-from grader_base import GradingStrategy, GradingInput, GradingResult
+## 开发原则
 
-class GeminiGrader(GradingStrategy):
-    @property
-    def name(self): return "Gemini 2.0 Flash"
-    
-    @property
-    def supports_bbox(self): return False  # Gemini 无 Grounding
-    
-    def grade(self, inp: GradingInput) -> GradingResult:
-        # 调用 Gemini API
-        # 解析响应 → 构建 GradingResult
-        return result
+- OCR 负责文字和字级坐标。
+- 规则负责高置信问题初判。
+- 模型负责复核文本和生成报告。
+- 坐标回填只使用 OCR bbox。
+- 不可定位的问题只进入报告，不自动画线。
+- 自动标注最多 12 条，按教学优先级筛选。
+- 不做静默兜底：模型输出无效时直接失败，方便定位问题。
+
+## 常用检查
+
+```bash
+python -m py_compile web_server.py main.py graders/fusion_grader.py graders/qwen_vl_max_grader.py utils/annotation_utils.py
+
+node --check static/js/app.js
+node --check static/js/components/GradingReportPanel.js
+node --check static/js/components/SidePanel.js
+node --check static/js/core/CanvasManager.js
 ```
-
-## 当前状态
-
-| 组件 | 状态 | 说明 |
-|------|------|------|
-| 抽象基类 | ✅ 完成 | 统一接口定义 |
-| Mock 批改器 | ✅ 完成 | 模拟数据，无需API |
-| Qwen-VL-Max 批改器 | ✅ 完成 | 需配置 DashScope API Key |
-| 渲染器 | ✅ 完成 | 仿截图左图右评样式 |
-| CLI 入口 | ✅ 完成 | 命令行一键运行 |
-| Web 服务 | ✅ 完成 | 浏览器上传查看 |
-| 测试图片生成 | ✅ 完成 | 模拟学生作业 |
-| Gemini 批改器 | ⏳ 待扩展 | 框架已就绪 |
-| 百度 API 批改器 | ⏳ 待扩展 | 框架已就绪 |
-| 真实学生样本测试 | ⏳ 待提供 | 需要真实作业照片 |
-
-## 待确认事项
-
-- [ ] **DashScope API Key**：是否已有阿里云账号？
-- [ ] **真实学生作业照片**：能否提供 10-20 张《小石潭记》翻译作业？
-- [ ] **国庆老师批改标准**：用于精细化 Prompt 规则
-- [ ] **Demo 形式**：周三展示用 CLI 还是 Web 页面？
-
-## 技术栈
-
-- Python 3.11
-- Pillow（图像处理/渲染）
-- Flask（Web 服务）
-- OpenAI SDK（兼容 DashScope API）
-- 策略模式（可插拔架构）

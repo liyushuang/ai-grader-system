@@ -49,6 +49,8 @@ class FusionGrader(GradingStrategy):
         baidu_api_key: str = None,
         baidu_secret_key: str = None,
         volcano_api_key: str = None,
+        ark_api_key: str = None,
+        ark_base_url: str = None,
         llm_provider: str = "qwen",
         model: str = None,
         temperature: float = 0.1,
@@ -59,6 +61,8 @@ class FusionGrader(GradingStrategy):
         self.baidu_api_key = baidu_api_key or os.environ.get("BAIDU_API_KEY", "")
         self.baidu_secret_key = baidu_secret_key or os.environ.get("BAIDU_SECRET_KEY", "")
         self.volcano_api_key = volcano_api_key or os.environ.get("VOLCANO_API_KEY", "")
+        self.ark_api_key = ark_api_key or os.environ.get("ARK_API_KEY", "")
+        self.ark_base_url = ark_base_url or os.environ.get("ARK_BASE_URL", "https://ark.cn-beijing.volces.com/api/v3")
         self.llm_provider = llm_provider.lower()
         self.temperature = temperature
         self.max_tokens = max_tokens
@@ -67,13 +71,17 @@ class FusionGrader(GradingStrategy):
         )
         if self.llm_provider == "volcano":
             self.model = model or os.environ.get("VOLCANO_MODEL", "doubao-seed-2-1-pro-260628")
+        elif self.llm_provider == "ark":
+            self.model = model or os.environ.get("ARK_MODEL", "ark-code-latest")
         else:
-            self.model = model or os.environ.get("FUSION_QWEN_MODEL", "qwen-plus")
+            self.model = model or os.environ.get("FUSION_QWEN_MODEL", "qwen3.6")
 
     @property
     def name(self) -> str:
         if self.llm_provider == "volcano":
             return f"Fusion (百度OCR + 规则引擎 + 火山引擎 {self.model})"
+        if self.llm_provider == "ark":
+            return f"Fusion (百度OCR + 规则引擎 + 方舟 {self.model})"
         return f"Fusion (百度OCR + 规则引擎 + Qwen {self.model})"
 
     @property
@@ -93,6 +101,11 @@ class FusionGrader(GradingStrategy):
                 self.volcano_api_key = os.environ.get("VOLCANO_API_KEY", "")
             if not self.volcano_api_key:
                 return False, "Volcano Ark API Key未配置"
+        elif self.llm_provider == "ark":
+            if not self.ark_api_key:
+                self.ark_api_key = os.environ.get("ARK_API_KEY", "")
+            if not self.ark_api_key:
+                return False, "方舟 ARK_API_KEY 未配置"
         else:
             if not self.dashscope_api_key:
                 self.dashscope_api_key = os.environ.get("DASHSCOPE_API_KEY", "")
@@ -100,6 +113,11 @@ class FusionGrader(GradingStrategy):
                 return False, "DashScope API Key未配置"
 
         return True, ""
+
+    def _openai_compatible_config(self) -> Tuple[str, str]:
+        if self.llm_provider == "ark":
+            return self.ark_api_key, self.ark_base_url
+        return self.dashscope_api_key, "https://dashscope.aliyuncs.com/compatible-mode/v1"
 
     def grade(self, grading_input: GradingInput) -> GradingResult:
         start_time = time.time()
@@ -121,17 +139,9 @@ class FusionGrader(GradingStrategy):
 
             # ── Phase 4: LLM终判 ──
             print(f"[Fusion] Phase 4: {self.llm_provider.upper()} 终判...")
-            try:
-                llm_result = self._run_llm_final(
-                    grading_input, full_text, pre_judgment
-                )
-            except Exception as exc:
-                print(f"[Fusion] LLM终判失败，返回规则结果: {exc}")
-                result = self._build_rule_only_result(
-                    grading_input, full_text, sentence_analyses, start_time, str(exc)
-                )
-                self._write_pipeline_debug(grading_input, debug_data, result)
-                return result
+            llm_result = self._run_llm_final(
+                grading_input, full_text, pre_judgment
+            )
 
             # ── Phase 5: 融合坐标 ──
             print("[Fusion] Phase 5: 融合坐标...")
@@ -140,6 +150,7 @@ class FusionGrader(GradingStrategy):
                 grading_input, start_time,
             )
             self._preserve_high_confidence_rules(result, sentence_analyses)
+            self._validate_teacher_report(result)
             self._write_pipeline_debug(grading_input, debug_data, result)
 
             return result
@@ -246,15 +257,20 @@ class FusionGrader(GradingStrategy):
                     message = f"✅ AI 分析完成：{llm_result.total_score}分，{llm_result.total_errors} 处错误"
                 yield {"type": "stage", "stage": "llm_done", "message": message}
             except Exception as exc:
-                result = self._build_rule_only_result(
-                    grading_input, full_text, sentence_analyses, start_time, str(exc)
+                self._write_pipeline_debug(
+                    grading_input,
+                    debug_data,
+                    GradingResult(
+                        recognized_text=full_text,
+                        sentence_analyses=sentence_analyses,
+                        total_score=0,
+                        overall_comment=f"模型复核失败: {exc}",
+                        status=GradingStatus.PROCESSING_ERROR,
+                        error_message=str(exc),
+                        grader_name=self.name,
+                    ),
                 )
-                self._write_pipeline_debug(grading_input, debug_data, result)
-                from utils.annotation_utils import generate_annotations_from_result, annotations_to_dict_list
-                annotations = generate_annotations_from_result(result)
-                yield {"type": "stage", "stage": "llm_timeout",
-                       "message": "⚠️ AI复核超时，已先返回规则初判结果"}
-                yield {"type": "result", "data": self._stream_result_data(result, annotations)}
+                yield {"type": "error", "message": f"模型复核失败: {exc}"}
                 return
 
             # ── Phase 7: 融合坐标 ──
@@ -264,10 +280,10 @@ class FusionGrader(GradingStrategy):
                 grading_input, start_time,
             )
             self._preserve_high_confidence_rules(result, sentence_analyses)
+            self._validate_teacher_report(result)
             self._write_pipeline_debug(grading_input, debug_data, result)
             yield {"type": "stage", "stage": "fuse_done",
                    "message": f"✅ 标注就绪：{sum(len(sa.errors) for sa in result.sentence_analyses)} 处错误，"
-                             f"{sum(1 for sa in result.sentence_analyses if sa.is_excellent)} 个精彩句，"
                              f"{sum(1 for sa in result.sentence_analyses if sa.is_highlight)} 个点睛句"}
 
             # 生成标注
@@ -530,59 +546,30 @@ class FusionGrader(GradingStrategy):
         except Exception as exc:
             print(f"[Fusion] debug输出失败: {exc}")
 
-    def _build_rule_only_result(
-        self,
-        inp: GradingInput,
-        full_text: str,
-        sentence_analyses: List[SentenceAnalysis],
-        start_time: float,
-        error_message: str = "",
-    ) -> GradingResult:
-        deductions = 0.0
-        for sa in sentence_analyses:
-            for err in sa.errors:
-                if self._is_high_confidence_rule(err):
-                    deductions += err.deduction_points
-                elif err.bbox:
-                    deductions += err.deduction_points * 0.5
-                else:
-                    deductions += err.deduction_points * 0.25
-        score = max(0, min(100, 100 - deductions * 2))
-        located = sum(1 for sa in sentence_analyses for e in sa.errors if e.bbox)
-        total_errors = sum(len(sa.errors) for sa in sentence_analyses)
-        completed = sum(
-            1 for sa in sentence_analyses
-            if sa.student_translation and not sa.student_translation.startswith("（未识别")
-        )
-        result = GradingResult(
-            recognized_text=full_text,
-            sentence_analyses=sentence_analyses,
-            total_score=score,
-            overall_comment=(
-                f"已完成OCR、文本清洗、任务标准对齐和规则初判；因模型复核超时或失败，"
-                f"当前展示规则批改结果。共识别到{completed}个批改单元，发现{total_errors}处候选问题，"
-                f"其中{located}处可定位到画布。"
-            ),
-            confidence=Confidence.MEDIUM,
-            status=GradingStatus.LOW_CONFIDENCE,
-            error_message=error_message,
-            grader_name=self.name,
-            processing_time_ms=int((time.time() - start_time) * 1000),
-            homework_completion=f"当前图片可对齐到{completed}个批改单元，未覆盖部分不按漏译直接扣分。",
-            strengths=["已按当前图片内容完成逐句对齐", "高置信规则已保留"],
-            weaknesses=["模型复核未完成，低置信问题建议人工再看一遍"],
-            suggestions=["优先检查画布中可定位的错字、重点词和补主语问题"],
-            system_tags=["规则初判", "模型复核未完成"],
-            dimension_scores={
-                "完整度": min(20, int(completed / max(len(sentence_analyses), 1) * 20)),
-                "准确度": max(0, 20 - min(20, deductions)),
-                "重点词掌握": max(0, 20 - min(20, deductions)),
-                "句式处理": 15,
-                "表达流畅度": 15,
-                "忠实原文": max(0, 20 - min(20, deductions // 2)),
-            },
-        )
-        return result
+    def _validate_teacher_report(self, result: GradingResult) -> None:
+        """Fail fast when the model did not return usable teacher-facing fields."""
+        result.overall_comment_general = result.overall_comment_general or result.overall_comment
+        required = {
+            "详细点评": result.overall_comment,
+            "教师总评": result.overall_comment_general,
+            "鼓励总评": result.overall_comment_encouraging,
+            "指导总评": result.overall_comment_instructive,
+            "连贯全文润色": result.polished_full_translation,
+        }
+        missing = [name for name, text in required.items() if self._is_invalid_teacher_text(text)]
+        if missing:
+            raise ParseException(f"模型返回缺少有效字段: {', '.join(missing)}")
+
+    def _is_invalid_teacher_text(self, text: str) -> bool:
+        text = (text or "").strip()
+        if len(text) < 8:
+            return True
+        bad_markers = [
+            "已完成OCR", "文本清洗", "任务标准对齐", "规则初判", "模型复核",
+            "当前展示规则批改结果", "暂无连贯全文润色", "批改异常",
+            "小区四季", "景色真美", "本文作者", "流程",
+        ]
+        return any(marker in text for marker in bad_markers)
 
     # ── Phase 2: OCR坐标映射 ──────────────────────
 
@@ -726,6 +713,9 @@ class FusionGrader(GradingStrategy):
 8. OCR 噪声或长句误译，例如“雪白的曝光倾泄而下”这类内容，不要加入 add_errors；最多写进 report.weaknesses。
 9. highlights 只允许输出真正像老师旁批的短句，例如“点睛句：石底奇观理解到位”，不要写“情感基调”“全篇感情”这类泛泛赏析。
 10. 如果不能确定 anchor_ids 与 evidence_text 完全对应，不要输出 add_errors。
+11. report 中 overall_comment、overall_comment_general、overall_comment_encouraging、overall_comment_instructive、polished_full_translation 必须全部填写有效内容，不能写“暂无”、不能描述 OCR/清洗/规则/模型流程。
+12. polished_full_translation 必须只基于当前 OCR 学生译文和《{inp.textbook_name}》原文生成连贯现代汉语译文；当前页没识别到的后文不要编造，也不能混入其他作文内容。
+13. 教师总评必须围绕当前页学生译文的问题和优点，不能出现“小区四季”“作文”“流程已完成”等无关内容。
 
 ## 输出结构
 {{
@@ -752,17 +742,17 @@ class FusionGrader(GradingStrategy):
   "highlights": [
     {{
       "segment_id": 3,
-      "type": "highlight|excellent",
+      "type": "highlight",
       "comment": "12-25字短旁批"
     }}
   ],
   "report": {{
     "total_score": 80,
-    "overall_comment": "100字内总评，必须基于当前OCR内容",
-    "overall_comment_general": "同overall_comment",
-    "overall_comment_encouraging": "鼓励性反馈",
-    "overall_comment_instructive": "指导性反馈",
-    "polished_full_translation": "基于当前OCR内容的润色译文",
+    "overall_comment": "100字内详细点评，必须基于当前OCR译文",
+    "overall_comment_general": "80字内教师通用总评",
+    "overall_comment_encouraging": "60字内鼓励性教师总评",
+    "overall_comment_instructive": "60字内指导性教师总评",
+    "polished_full_translation": "只基于当前OCR内容的连贯全文润色译文",
     "homework_completion": "完成情况",
     "strengths": ["具体优点"],
     "weaknesses": ["具体问题"],
@@ -798,12 +788,15 @@ class FusionGrader(GradingStrategy):
             return result
         else:
             from qwen_vl_max_grader import QwenVLMaxGrader
+            llm_api_key, llm_base_url = self._openai_compatible_config()
             qwen = QwenVLMaxGrader(
-                api_key=self.dashscope_api_key,
+                api_key=llm_api_key,
+                base_url=llm_base_url,
                 model=self.model,
                 temperature=self.temperature,
                 max_tokens=self.max_tokens,
                 timeout_seconds=self.llm_timeout_seconds,
+                enable_thinking=False,
             )
             raw_response, token_usage = qwen._call_api(system_prompt, user_content)
             result = self._parse_review_response(raw_response, inp)
@@ -879,12 +872,15 @@ class FusionGrader(GradingStrategy):
                     raise Exception(event.get("message", "LLM API 调用失败"))
         else:
             from qwen_vl_max_grader import QwenVLMaxGrader
+            llm_api_key, llm_base_url = self._openai_compatible_config()
             qwen = QwenVLMaxGrader(
-                api_key=self.dashscope_api_key,
+                api_key=llm_api_key,
+                base_url=llm_base_url,
                 model=self.model,
                 temperature=self.temperature,
                 max_tokens=self.max_tokens,
                 timeout_seconds=self.llm_timeout_seconds,
+                enable_thinking=False,
             )
             for event in qwen._call_api_stream(system_prompt, user_content):
                 if event.get("type") == "llm_chunk":
@@ -910,7 +906,7 @@ class FusionGrader(GradingStrategy):
 
 【批改原则】
 1. 只依据用户提供的 OCR 学生译文批改。
-2. 只标最关键问题，errors 最多2处；优秀句最多2处；点睛句最多2处。
+2. 只标最关键问题，errors 最多2处；点睛句最多2处。
 3. 错误必须具体到词或短语，reason 不超过25字。
 4. 不要把未翻译的后半篇逐句展开，只在总评中说明“后半部分未完成”。
 5. 输出必须是纯 JSON，不能输出解释、思考过程或 markdown。
@@ -940,11 +936,11 @@ class FusionGrader(GradingStrategy):
     }}
   ],
   "total_score": 80,
-  "overall_comment": "80字内总评",
-  "overall_comment_general": "80字内总评",
-  "overall_comment_encouraging": "60字内鼓励",
-  "overall_comment_instructive": "60字内建议",
-  "polished_full_translation": "简短润色译文",
+  "overall_comment": "80字内详细点评，必须基于当前OCR译文",
+  "overall_comment_general": "80字内教师通用总评",
+  "overall_comment_encouraging": "60字内鼓励性教师总评",
+  "overall_comment_instructive": "60字内指导性教师总评",
+  "polished_full_translation": "只基于当前OCR内容的连贯全文润色译文",
   "dimension_scores": {{"完整度":15,"准确度":15,"重点词掌握":15,"句式处理":15,"表达流畅度":15,"忠实原文":15}},
   "dimension_analysis": {{}},
   "homework_completion": "完成情况",
@@ -970,7 +966,7 @@ class FusionGrader(GradingStrategy):
            规则引擎没有则用字符匹配
         2. 错误级 bbox：LLM错误 → 在规则引擎错误中找同名 → 复用精确坐标
            找不到 → 在OCR行中做字符位置匹配
-        3. 精彩句/点睛句：用句子级 bbox（波浪线/星星标注在整句范围）
+        3. 点睛句：用句子级 bbox（绿色波浪线标注在整句范围）
         """
         if hasattr(llm_result, "review_payload"):
             return self._fuse_review_results(rule_analyses, ocr_lines, llm_result, start_time)
@@ -1058,8 +1054,8 @@ class FusionGrader(GradingStrategy):
                     target.is_highlight = True
                     target.highlight_comment = sa.highlight_comment
                 if sa.is_excellent and sa.bbox and not target.errors:
-                    target.is_excellent = True
-                    target.polished_translation = sa.polished_translation
+                    target.is_highlight = True
+                    target.highlight_comment = sa.highlight_comment or sa.polished_translation
                 for error in sa.errors:
                     if self._should_accept_model_error(error, target, full_text=self._join_ocr_text(ocr_lines)):
                         if not self._has_similar_error(target.errors, error):
@@ -1143,10 +1139,7 @@ class FusionGrader(GradingStrategy):
             if not self._can_accept_review_highlight(item):
                 continue
             target = fused_analyses[segment_id - 1]
-            if item.get("type") == "excellent" and not target.errors:
-                target.is_excellent = True
-            else:
-                target.is_highlight = True
+            target.is_highlight = True
             target.highlight_comment = item.get("comment", "") or target.highlight_comment
 
         review_result.sentence_analyses = fused_analyses

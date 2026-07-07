@@ -598,10 +598,6 @@ class CanvasManager {
             case 'C':
                 setTool('circle');
                 break;
-            case 's':
-            case 'S':
-                setTool('star');
-                break;
             case 'v':
             case 'V':
                 setTool('select');

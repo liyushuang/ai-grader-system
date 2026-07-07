@@ -71,35 +71,35 @@ class GradingReportPanel {
                     <button class="style-btn ${this._activeCommentStyle === 'encouraging' ? 'active' : ''}" onclick="window.sidePanel.reportPanel.switchCommentStyle('encouraging')">鼓励</button>
                     <button class="style-btn ${this._activeCommentStyle === 'instructive' ? 'active' : ''}" onclick="window.sidePanel.reportPanel.switchCommentStyle('instructive')">指导</button>
                 </div>
-                <textarea class="textarea-editable" id="teacherCommentText" placeholder="在此输入教师评语...">${this.getActiveCommentText()}</textarea>
+                <textarea class="textarea-editable" id="teacherCommentText" placeholder="在此输入教师评语...">${this._escapeHtml(this.getActiveCommentText())}</textarea>
             `;
             html += d.dimension_scores ? this._renderDimensions(d.dimension_scores, d.dimension_analysis) : '';
             html += d.homework_completion ? `
                 <div class="report-section">
                     <div class="report-label">📝 完成情况</div>
-                    <div class="report-text">${d.homework_completion}</div>
+                    <div class="report-text">${this._escapeHtml(d.homework_completion)}</div>
                 </div>` : '';
             html += d.strengths && d.strengths.length ? `
                 <div class="report-section">
                     <div class="report-label">👍 优点</div>
-                    <ul class="report-list good">${d.strengths.map(s => `<li>${s}</li>`).join('')}</ul>
+                    <ul class="report-list good">${d.strengths.map(s => `<li>${this._escapeHtml(s)}</li>`).join('')}</ul>
                 </div>` : '';
             html += d.weaknesses && d.weaknesses.length ? `
                 <div class="report-section">
                     <div class="report-label">⚠️ 待改进</div>
-                    <ul class="report-list warn">${d.weaknesses.map(w => `<li>${w}</li>`).join('')}</ul>
+                    <ul class="report-list warn">${d.weaknesses.map(w => `<li>${this._escapeHtml(w)}</li>`).join('')}</ul>
                 </div>` : '';
             html += d.suggestions && d.suggestions.length ? `
                 <div class="report-section">
                     <div class="report-label">💡 改进建议</div>
-                    <ul class="report-list tip">${d.suggestions.map(s => `<li>${s}</li>`).join('')}</ul>
+                    <ul class="report-list tip">${d.suggestions.map(s => `<li>${this._escapeHtml(s)}</li>`).join('')}</ul>
                 </div>` : '';
         } else if (this._activeSubTab === 'polishing') {
             // ── Tab 3: 全文润色 ──
             html += `
                 <div class="report-section">
                     <div class="report-label">✨ 连贯全文润色</div>
-                    <div class="polished-box">${d.polished_full_translation || '暂无连贯全文润色。'}</div>
+                    <div class="polished-box">${this._escapeHtml(d.polished_full_translation || '暂无连贯全文润色。')}</div>
                 </div>
                 
                 <div class="report-section">
@@ -111,18 +111,18 @@ class GradingReportPanel {
                 d.sentence_analyses.forEach((sa, idx) => {
                     const errsHtml = sa.errors && sa.errors.length 
                         ? `<div class="comp-errs">
-                             <strong>问题：</strong>${sa.errors.map(e => `[${e.error_type}] "${e.original_text}" → "${e.correct_text}" (${e.reason})`).join('; ')}
+                             <strong>问题：</strong>${this._escapeHtml(sa.errors.map(e => `[${e.error_type}] "${e.original_text}" → "${e.correct_text}" (${e.reason})`).join('; '))}
                            </div>`
                         : '';
                         
                     html += `
                         <div class="comparison-item" style="padding:10px 0; border-bottom:1px solid #f1f5f9;">
                             <span class="comp-lbl">第 ${idx + 1} 句原文</span>
-                            <div class="comp-val original" style="color:#64748b; font-weight:500;">${sa.original_classical}</div>
+                            <div class="comp-val original" style="color:#64748b; font-weight:500;">${this._escapeHtml(sa.original_classical)}</div>
                             <span class="comp-lbl">学生翻译</span>
-                            <div class="comp-val student" style="color:#334155;">${sa.student_translation || '(未识别)'}</div>
+                            <div class="comp-val student" style="color:#334155;">${this._escapeHtml(sa.student_translation || '(未识别)')}</div>
                             <span class="comp-lbl">润色译文</span>
-                            <div class="comp-val polished" style="color:#10b981; background:#f0fdf4; padding:4px 6px; border-radius:4px; font-weight:500;">${sa.polished_translation || sa.standard_translation}</div>
+                            <div class="comp-val polished" style="color:#10b981; background:#f0fdf4; padding:4px 6px; border-radius:4px; font-weight:500;">${this._escapeHtml(sa.polished_translation || sa.standard_translation)}</div>
                             ${errsHtml}
                         </div>
                     `;
@@ -169,7 +169,6 @@ class GradingReportPanel {
         const lineItems = annotations.filter(a => a.type === 'line');
         const circleItems = annotations.filter(a => a.type === 'circle');
         const wavyItems = annotations.filter(a => a.type === 'wavy');
-        const starItems = annotations.filter(a => a.type === 'star');
         const correctionItems = [...lineItems, ...circleItems];
         const errorItems = correctionItems.length ? [] : this._collectErrors(d);
 
@@ -179,8 +178,7 @@ class GradingReportPanel {
             ...errorItems.map((e, idx) => `${correctionItems.length + idx + 1}. ${e}`)
         ].slice(0, 6);
         const strengths = [
-            ...wavyItems.map(a => a.comment || '这句翻译比较准确、流畅，可以保留这种表达。'),
-            ...starItems.map(a => a.comment || '这处是文章理解的关键句，建议重点记忆。'),
+            ...wavyItems.map(a => a.comment || '这处是文章理解的关键句，建议重点记忆。'),
             ...(d.strengths || [])
         ].slice(0, 5);
         const pitfalls = [
@@ -210,7 +208,7 @@ class GradingReportPanel {
                     <span>优秀表达</span>
                     <button class="copy-link" onclick="window.sidePanel.reportPanel.copyBlock('strengths')">复制</button>
                 </div>
-                ${this._renderBulletList(strengths, '暂无优秀表达记录，可从波浪线或星标处补充。')}
+                ${this._renderBulletList(strengths, '暂无优秀表达记录，可从波浪线处补充。')}
             </section>
 
             <section class="deliverable-section" data-copy-block="pitfalls">
