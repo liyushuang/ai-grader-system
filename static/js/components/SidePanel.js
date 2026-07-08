@@ -64,6 +64,9 @@ class SidePanel {
         if (this.reportPanel && gradingData) {
             this.reportPanel.render(gradingData);
         }
+        if (window.annotationStore) {
+            this.renderSideBySide(window.annotationStore.getAll());
+        }
     }
 
     clearAllViews() {
@@ -91,9 +94,9 @@ class SidePanel {
             item.className = 'ann-item' + (ann.id === window.annotationStore.selectedId ? ' selected' : '');
             item.onclick = () => this._onItemClick(ann.id);
 
-            const iconMap = { wavy: ['∼', 'wavy'], line: ['—', 'line'], circle: ['○', 'circle'], star: ['★', 'star'] };
+            const iconMap = { wavy: ['∼', 'wavy'], line: ['—', 'line'], circle: ['○', 'circle'], star: ['∼', 'wavy'], check: ['✓', 'check'] };
             const [icon, cls] = iconMap[ann.type] || ['?', 'line'];
-            const typeLabelMap = { wavy: '波浪线·点睛句', line: '横线·纠错', circle: '圆圈·错字', star: '点睛句' };
+            const typeLabelMap = { wavy: '点睛句', line: '横线·纠错', circle: '圆圈·错字', star: '点睛句', check: '对勾·翻译正确' };
             const typeLabel = typeLabelMap[ann.type] || ann.type;
             const sourceLabel = ann.source === 'ai' ? '🤖 AI' : '👤 教师';
 
@@ -180,18 +183,13 @@ class SidePanel {
                 this.openAnnotationEditor(ann.id);
             };
             
-            const iconMap = { wavy: '∼', line: '—', circle: '○', star: '★' };
-            const typeLabelMap = { wavy: '点睛', line: '订正', circle: '错字', star: '点睛' };
+            const iconMap = { wavy: '∼', line: '—', circle: '○', star: '∼', check: '✓' };
+            const typeLabelMap = { wavy: '点睛句', line: '行内批注', circle: '错字词', star: '点睛句', check: '翻译正确' };
             const icon = iconMap[ann.type] || '?';
             const typeLabel = typeLabelMap[ann.type] || ann.type;
             const sourceLabel = ann.source === 'ai' ? '🤖 AI' : '👤 教师';
             const detail = this._getAnnotationDetail(ann);
-            const detailHtml = detail ? `
-                <div class="card-evidence">
-                    ${detail.errorType ? `<span class="card-tag">${this._escapeHtml(detail.errorType)}</span>` : ''}
-                    ${detail.reason ? `<span class="card-reason">依据：${this._escapeHtml(detail.reason)}</span>` : ''}
-                </div>
-            ` : '';
+            const cardText = this._formatTeacherSideComment(ann, detail);
             
             card.innerHTML = `
                 <span class="card-number">${idx + 1}</span>
@@ -202,8 +200,7 @@ class SidePanel {
                     </div>
                     <span style="font-size:11px;color:#94a3b8;">${sourceLabel}</span>
                 </div>
-                <div class="card-comment">${this._escapeHtml(ann.comment || '(无批注)')}</div>
-                ${detailHtml}
+                <div class="card-comment">${this._escapeHtml(cardText || '(无批注)')}</div>
             `;
             
             panel.appendChild(card);
@@ -215,11 +212,43 @@ class SidePanel {
         });
     }
 
+    _formatTeacherSideComment(ann, detail) {
+        const raw = String(ann.comment || '').trim();
+        if (ann.type === 'check') return raw || '这里翻译正确';
+        const type = detail?.errorType || (ann.type === 'wavy' || ann.type === 'star' ? '点睛句' : '');
+        const reason = String(detail?.reason || '').trim();
+        if ((ann.type === 'wavy' || ann.type === 'star') && raw) {
+            const cleaned = raw.replace(/^点睛句[★☆]?[:：]?/, '').trim();
+            return `点睛句★\n${cleaned}`;
+        }
+        if (ann.type === 'line' && raw && !raw.startsWith('建议') && !raw.startsWith('可')) {
+            return `建议改为\n“${raw.replace(/^改[:：]?/, '').replace(/^改为[:：]?/, '').trim()}”`;
+        }
+        if (raw && reason && !raw.includes(reason) && !raw.includes('因为')) {
+            return `${type ? `${type}：` : ''}${raw}，因为${reason}`;
+        }
+        if (raw && type && !raw.startsWith(type)) {
+            return `${type}：${raw}`;
+        }
+        if (raw) return raw;
+        if (type || reason) return `${type || '建议'}：这里需要调整，${reason ? `因为${reason}` : '让表达更准确。'}`;
+        return '';
+    }
+
     _getAnnotationDetail(ann) {
-        if (!ann || !this.gradingData) return null;
+        if (!ann) return null;
+        if (ann.error_type || ann.reason) {
+            return {
+                errorType: ann.error_type || '',
+                reason: ann.reason || ''
+            };
+        }
+        if (!this.gradingData) return null;
         const analyses = this.gradingData.sentence_analyses || [];
-        const sa = analyses[Number(ann.sentence_index)];
-        const err = sa && sa.errors ? sa.errors[Number(ann.error_index)] : null;
+        const sentenceIndex = ann.sentenceIndex ?? ann.sentence_index;
+        const errorIndex = ann.errorIndex ?? ann.error_index;
+        const sa = analyses[Number(sentenceIndex)];
+        const err = sa && sa.errors ? sa.errors[Number(errorIndex)] : null;
         if (!err) {
             if (ann.type === 'wavy') {
                 const comment = ann.comment || '';

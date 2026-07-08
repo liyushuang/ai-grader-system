@@ -9,17 +9,21 @@ class WavyLine {
         const baseY = y1;
         const color = '#10B981';
         
-        // 使用二次贝塞尔曲线生成平滑波浪
+        // 生成带轻微手写抖动的波浪线。
         let pathStr = `M ${x1} ${baseY}`;
-        const steps = Math.max(Math.floor(Math.abs(length) / 4), 8);
+        const steps = Math.max(Math.floor(Math.abs(length) / 5), 8);
         const stepSize = length / steps;
         
         for (let i = 1; i <= steps; i++) {
             const x = x1 + i * stepSize;
             const prevX = x1 + (i - 1) * stepSize;
             const midX = (prevX + x) / 2;
-            const midY = baseY + amplitude * Math.sin((midX - x1) / length * Math.PI * 4);
-            const endY = baseY + amplitude * Math.sin((x - x1) / length * Math.PI * 4);
+            const midJitter = Math.sin((x1 + y1 + i * 13) * 0.31) * 0.9;
+            const endJitter = Math.cos((x1 + y1 + i * 19) * 0.23) * 0.8;
+            const midAmp = amplitude + Math.sin(i * 0.7) * 0.8;
+            const endAmp = amplitude + Math.cos(i * 0.6) * 0.7;
+            const midY = baseY + midAmp * Math.sin((midX - x1) / length * Math.PI * 5) + midJitter;
+            const endY = baseY + endAmp * Math.sin((x - x1) / length * Math.PI * 5) + endJitter;
             pathStr += ` Q ${midX.toFixed(1)} ${midY.toFixed(1)}, ${x.toFixed(1)} ${endY.toFixed(1)}`;
         }
         

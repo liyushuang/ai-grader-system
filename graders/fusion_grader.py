@@ -23,6 +23,13 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+from utils.env_loader import (
+    DEFAULT_ARK_BASE_URL,
+    DEFAULT_ARK_MODEL,
+    DEPRECATED_ARK_BASE_URLS,
+    DEPRECATED_ARK_MODELS,
+    normalize_ark_env,
+)
 from grader_base import (
     GradingStrategy, GradingInput, GradingResult,
     SentenceAnalysis, ErrorItem, BoundingBox,
@@ -61,8 +68,12 @@ class FusionGrader(GradingStrategy):
         self.baidu_api_key = baidu_api_key or os.environ.get("BAIDU_API_KEY", "")
         self.baidu_secret_key = baidu_secret_key or os.environ.get("BAIDU_SECRET_KEY", "")
         self.volcano_api_key = volcano_api_key or os.environ.get("VOLCANO_API_KEY", "")
-        self.ark_api_key = ark_api_key or os.environ.get("ARK_API_KEY", "")
-        self.ark_base_url = ark_base_url or os.environ.get("ARK_BASE_URL", "https://ark.cn-beijing.volces.com/api/plan/v3")
+        self.ark_api_key = ark_api_key or os.environ.get("ARK_API_KEY", "") or os.environ.get("VOLCANO_API_KEY", "")
+        normalized_ark_base_url, normalized_ark_model = normalize_ark_env()
+        explicit_ark_base_url = (ark_base_url or "").strip()
+        if explicit_ark_base_url.rstrip("/") in DEPRECATED_ARK_BASE_URLS:
+            explicit_ark_base_url = DEFAULT_ARK_BASE_URL
+        self.ark_base_url = explicit_ark_base_url or normalized_ark_base_url or DEFAULT_ARK_BASE_URL
         self.llm_provider = llm_provider.lower()
         self.temperature = temperature
         self.max_tokens = max_tokens
@@ -70,9 +81,12 @@ class FusionGrader(GradingStrategy):
             llm_timeout_seconds or os.environ.get("FUSION_LLM_TIMEOUT_SECONDS", "90")
         )
         if self.llm_provider == "volcano":
-            self.model = model or os.environ.get("VOLCANO_MODEL", "doubao-seed-2-1-pro-260628")
+            self.model = model or os.environ.get("VOLCANO_MODEL", DEFAULT_ARK_MODEL)
         elif self.llm_provider == "ark":
-            self.model = model or os.environ.get("ARK_MODEL", "ark-code-latest")
+            explicit_model = (model or "").strip()
+            if explicit_model in DEPRECATED_ARK_MODELS:
+                explicit_model = DEFAULT_ARK_MODEL
+            self.model = explicit_model or normalized_ark_model or DEFAULT_ARK_MODEL
         else:
             self.model = model or os.environ.get("FUSION_QWEN_MODEL", "qwen3.6-max-preview")
 
@@ -103,7 +117,7 @@ class FusionGrader(GradingStrategy):
                 return False, "Volcano Ark API Key未配置"
         elif self.llm_provider == "ark":
             if not self.ark_api_key:
-                self.ark_api_key = os.environ.get("ARK_API_KEY", "")
+                self.ark_api_key = os.environ.get("ARK_API_KEY", "") or os.environ.get("VOLCANO_API_KEY", "")
             if not self.ark_api_key:
                 return False, "方舟 ARK_API_KEY 未配置"
         else:
@@ -128,7 +142,7 @@ class FusionGrader(GradingStrategy):
             ocr_lines, full_text = self._run_baidu_ocr(grading_input)
 
             # ── Phase 2: 清洗、动态对齐、规则引擎预处理 ──
-            print("[Fusion] Phase 2: OCR清洗 + 动态对齐 + 规则初判...")
+            print("[Fusion] Phase 2: OCR清洗 + 动态对齐 + 参考材料...")
             sentence_analyses, clean_lines, segments, aligned, debug_data = self._run_rule_pipeline(
                 grading_input, ocr_lines, full_text
             )
@@ -204,8 +218,8 @@ class FusionGrader(GradingStrategy):
             yield {"type": "stage", "stage": "align_done",
                    "message": f"✅ 标准对齐完成：{aligned_count}/{len(aligned)} 个单元有作答，{needs_review_count} 个需复核"}
 
-            # ── Phase 4: 规则引擎初判 ──
-            yield {"type": "stage", "stage": "rule", "message": "📐 正在生成补主语、重点词、错别字和漏译候选..."}
+            # ── Phase 4: 参考材料生成 ──
+            yield {"type": "stage", "stage": "rule", "message": "📚 正在生成重点词、易错点和 OCR 锚点参考..."}
             engine = RuleEngine()
             sentence_analyses = engine.grade_aligned_segments(aligned)
             self._map_aligned_coords(sentence_analyses, aligned, body_lines)
@@ -219,8 +233,8 @@ class FusionGrader(GradingStrategy):
             }
             debug_data["full_text"] = full_text
             yield {"type": "stage", "stage": "rule_done",
-                   "message": f"✅ 规则候选：{len(aligned)} 个批改单元，"
-                             f"{sum(len(sa.errors) for sa in sentence_analyses)} 处高置信/候选问题，"
+                   "message": f"✅ 参考材料：{len(aligned)} 个批改单元，"
+                             f"{sum(len(sa.errors) for sa in sentence_analyses)} 处参考候选，"
                              f"{locatable_rule_count} 处可定位"}
 
             # ── Phase 5: 构建预处理摘要 ──
@@ -251,7 +265,7 @@ class FusionGrader(GradingStrategy):
                 if hasattr(llm_result, "review_payload"):
                     review_count = len(llm_result.review_payload.get("confirmed_rule_errors", []))
                     add_count = len(llm_result.review_payload.get("add_errors", []))
-                    message = f"✅ 模型批改完成：判断 {review_count} 个规则候选，补充 {add_count} 个候选"
+                    message = f"✅ 模型批改完成：参考 {review_count} 个候选，发现 {add_count} 个模型问题"
                 else:
                     message = f"✅ AI 分析完成：{llm_result.total_score}分，{llm_result.total_errors} 处错误"
                 yield {"type": "stage", "stage": "llm_done", "message": message}
@@ -316,6 +330,7 @@ class FusionGrader(GradingStrategy):
                 "grader_name": result.grader_name,
                 "processing_time_ms": result.processing_time_ms,
                 "pipeline_debug_path": getattr(result, "pipeline_debug_path", ""),
+                "pipeline_metrics": getattr(result, "pipeline_metrics", {}),
                 "annotations": annotations_to_dict_list(annotations),
                 "sentence_analyses": [
                     {
@@ -520,6 +535,7 @@ class FusionGrader(GradingStrategy):
                 "total_errors": result.total_errors,
                 "dimension_scores": result.dimension_scores,
                 "review_payload": getattr(result, "review_payload", None),
+                "pipeline_metrics": getattr(result, "pipeline_metrics", {}),
                 "annotations": [
                     {
                         "sentence_index": idx,
@@ -686,10 +702,10 @@ class FusionGrader(GradingStrategy):
 
         sentence_pairs = QwenVLMaxGrader._default_sentence_pairs()
 
-        return f"""你是资深中学语文教师，专门复核《{inp.textbook_name}》文言文翻译作业。
+        return f"""你是资深中学语文教师，专门批改《{inp.textbook_name}》文言文翻译作业。
 
-你的职责：作为最终批改模型，只做“文本批改推理”，不要输出坐标、bbox、画线位置。
-坐标会由后续程序用 OCR bbox 回填。你必须基于 OCR 学生译文和逐句参照独立批改；规则初判只作为简单候选提示，不能替代你的判断。
+你的职责：作为唯一主批改模型，找出学生作业里的主要明显问题，并给出老师口吻的修改建议。不要输出坐标、bbox、画线位置。
+坐标会由后续程序用 OCR bbox 回填。规则候选只是参考材料，不代表正确答案，也不能替代你的判断。
 
 ## 逐句精确参照（必须逐句严格对照）
 {sentence_pairs}
@@ -697,24 +713,26 @@ class FusionGrader(GradingStrategy):
 ## OCR学生译文
 {ocr_text}
 
-## 规则初判候选
+## 参考材料
 {pre_judgment}
 
-## 复核硬约束
-1. 规则候选都只是候选；必须逐条判断 confirm 或 reject。若学生文本中有语义等价表达，或规则误判，应 reject。
-2. 核心批改由你完成：即使规则没有提出，只要学生译文存在明确问题，也应补充 add_errors。
-3. 你可以补充 add_errors，范围包括但不限于“重点词误译、漏译、补主语、句式/语序、错别字/不规范字、表达不当”；必须引用 OCR anchors 中已经存在的 anchor_ids，不能创建、改写、猜测 anchor_id；且 anchor_ids 拼出的文字必须等于 evidence_text；最多补充 12 条，最终画布最多展示 12 条，由程序按优先级筛选。
+## 批改硬约束
+1. 主要目标是不漏掉明显问题，不要只输出少量保守问题。
+2. 重点识别五类问题：错别字/不规范字、明显语病/句式杂糅、关键词误解/重点词错译、漏写/漏译/内容缺失、表达重复/用词不当。
+3. 规则候选只是参考；若规则误判应 reject。规则没提出但你发现明确问题，也必须补充 add_errors。
+4. 你可以补充 add_errors，范围包括但不限于“重点词误译、漏译、补主语、句式/语序、错别字/不规范字、表达不当”；必须引用 OCR anchors 中已经存在的 anchor_ids，不能创建、改写、猜测 anchor_id；且 anchor_ids 拼出的文字必须等于 evidence_text；最多补充 12 条，最终画布最多展示 12 条，由程序按优先级筛选。
 4. 不要输出 bbox、坐标、画线位置。
-5. 语义不准、漏译、重点词理解不到位等问题，只有在能用 anchor_ids 精确定位原文短词或短句时才加入 add_errors；不能定位或低置信的问题写入 report.weaknesses 或 suggestions。
-6. 批改对象是文言文翻译，不是作文赏析；优先看重点词、补主语、错别字、特殊句式。
+5. 所有进入 add_errors 的问题都要能用 anchor_ids 定位；不能定位但重要的问题写入 report.weaknesses 或 suggestions。
+6. 批改对象是文言文翻译，不是作文赏析；优先看重点词、补主语、错别字、特殊句式、表达重复。
 7. 输出必须是纯 JSON，不要 markdown。
 8. 不要把 OCR 文本自行改写成你猜测的文字；若 OCR 中确有该词句且 anchor_ids 可精确引用，就按学生译文文本正常批改。
-9. highlights 只允许输出真正像老师旁批的短句，例如“点睛句：石底奇观理解到位”，不要写“情感基调”“全篇感情”这类泛泛赏析。
+9. highlights 只输出真正能增强学生信心的点睛句，建议 0-1 条，不强制；例如“点睛句：石底奇观理解到位”，不要写“情感基调”“全篇感情”这类泛泛赏析。
 10. 如果不能确定 anchor_ids 与 evidence_text 完全对应，不要输出 add_errors；可以把问题写入 report，但不要画布标注。
 11. add_errors 优先级：补主语/漏译 > 重点词误译 > 句式语序 > 错别字/不规范字；不要为了凑数量输出泛泛问题。
 12. report 中 overall_comment、overall_comment_general、overall_comment_encouraging、overall_comment_instructive、polished_full_translation 必须全部填写有效内容，不能写“暂无”、不能描述 OCR/清洗/规则/模型流程。
 13. polished_full_translation 必须只基于当前 OCR 学生译文和《{inp.textbook_name}》原文生成连贯现代汉语译文；当前页没识别到的后文不要编造，也不能混入其他作文内容。
 14. 教师总评必须围绕当前页学生译文的问题和优点，不能出现“小区四季”“作文”“流程已完成”等无关内容。
+15. add_errors.reason 必须写成可给老师看的判断依据；add_errors.comment 必须写成一段老师口吻点评，包含问题类型、修改建议和判断依据，不要复述完整原文。
 
 ## 输出结构
 {{
@@ -734,6 +752,7 @@ class FusionGrader(GradingStrategy):
       "evidence_text": "必须原样出现在OCR中的词或短语",
       "correct_text": "正确写法或译法",
       "reason": "短理由",
+      "comment": "老师口吻的一段话：问题类型 + 修改建议 + 判断依据，不展示完整原文",
       "deduction_points": 2,
       "confidence": "high|medium|low"
     }}
@@ -742,7 +761,7 @@ class FusionGrader(GradingStrategy):
     {{
       "segment_id": 3,
       "type": "highlight",
-      "comment": "12-25字短旁批"
+      "comment": "老师口吻点睛点评，说明哪里值得保留和为什么"
     }}
   ],
   "report": {{
@@ -1049,7 +1068,7 @@ class FusionGrader(GradingStrategy):
 
             target = self._find_matching_sentence_in_list(fused_analyses, sa)
             if target:
-                if sa.is_highlight and sa.bbox and not target.is_highlight and self._is_key_highlight(sa):
+                if sa.is_highlight and sa.bbox and not target.errors and not target.is_highlight and self._is_key_highlight(sa):
                     target.is_highlight = True
                     target.highlight_comment = sa.highlight_comment
                 if sa.is_excellent and sa.bbox and not target.errors:
@@ -1060,6 +1079,10 @@ class FusionGrader(GradingStrategy):
                         if not self._has_similar_error(target.errors, error):
                             target.errors.append(error)
                             accepted_model_errors += 1
+                if target.errors:
+                    target.is_highlight = False
+                    target.is_excellent = False
+                    target.highlight_comment = ""
 
         print(f"[Fusion] 坐标映射: {total_mapped} 句, {total_errors_mapped} 个错误")
         print(f"[Fusion] 模型补充问题采纳: {accepted_model_errors} 个")
@@ -1095,23 +1118,35 @@ class FusionGrader(GradingStrategy):
             sa.errors = kept
 
         anchor_index = self._build_ocr_anchor_index(ocr_lines)
+        model_total = 0
+        model_located = 0
+        model_rejected = []
         for item in payload.get("add_errors", [])[:12]:
+            model_total += 1
             try:
                 segment_id = int(item.get("segment_id", 0))
             except Exception:
+                model_rejected.append({"item": item, "reason": "segment_id无效"})
                 continue
             if not 1 <= segment_id <= len(fused_analyses):
+                model_rejected.append({"item": item, "reason": "segment_id越界"})
                 continue
             anchor_ids = item.get("anchor_ids") or []
             evidence = item.get("evidence_text") or item.get("original_text") or ""
             anchor_text, anchor_bbox = self._resolve_anchor_span(anchor_ids, anchor_index)
             if not evidence or not anchor_ids or not anchor_bbox:
+                model_rejected.append({"item": item, "reason": "缺少evidence/anchor/bbox"})
                 continue
             if self._clean_for_match(anchor_text) != self._clean_for_match(evidence):
+                model_rejected.append({"item": item, "reason": f"anchor文字不匹配: {anchor_text}"})
                 continue
             if not self._can_accept_review_add_error(item):
+                model_rejected.append({"item": item, "reason": "展示安全校验未通过"})
                 continue
             target = fused_analyses[segment_id - 1]
+            if self._is_covered_omission_false_positive(item, target):
+                model_rejected.append({"item": item, "reason": "疑似已译出，不采纳漏译"})
+                continue
             err = ErrorItem(
                 error_type=self._parse_error_type_value(item.get("error_type", "")),
                 original_text=evidence,
@@ -1122,8 +1157,12 @@ class FusionGrader(GradingStrategy):
             )
             err.anchor_ids = anchor_ids
             err.model_added = True
+            err.teacher_comment = item.get("comment", "")
             if err.bbox and not self._has_similar_error(target.errors, err):
                 target.errors.append(err)
+                model_located += 1
+            else:
+                model_rejected.append({"item": item, "reason": "重复问题"})
 
         for item in payload.get("highlights", [])[:4]:
             try:
@@ -1135,8 +1174,19 @@ class FusionGrader(GradingStrategy):
             if not self._can_accept_review_highlight(item):
                 continue
             target = fused_analyses[segment_id - 1]
+            if target.errors:
+                continue
             target.is_highlight = True
             target.highlight_comment = item.get("comment", "") or target.highlight_comment
+
+        review_result.pipeline_metrics = {
+            "model_candidates": model_total,
+            "model_located": model_located,
+            "model_rejected": len(model_rejected),
+            "model_rejected_details": model_rejected[:20],
+            "final_error_count": sum(len(sa.errors) for sa in fused_analyses),
+            "final_highlight_count": sum(1 for sa in fused_analyses if sa.is_highlight),
+        }
 
         review_result.sentence_analyses = fused_analyses
         review_result.total_score = self._score_from_analyses(fused_analyses, review_result.total_score)
@@ -1147,7 +1197,8 @@ class FusionGrader(GradingStrategy):
         review_result.grader_name = self.name
         review_result.processing_time_ms = int((time.time() - start_time) * 1000)
         review_result.normalize_scores()
-        print(f"[Fusion] review融合: {sum(len(sa.errors) for sa in fused_analyses)} 个问题")
+        print(f"[Fusion] 模型主批改: {model_located}/{model_total} 个问题完成坐标回填，"
+              f"{sum(len(sa.errors) for sa in fused_analyses)} 个最终问题")
         return review_result
 
     def _calibrate_dimension_scores(self, total_score: int, scores: dict) -> dict:
@@ -1282,6 +1333,27 @@ class FusionGrader(GradingStrategy):
             return True
         text = f"{getattr(err.error_type, 'value', err.error_type)} {err.original_text} {err.correct_text} {err.reason}"
         return any(k in text for k in ["错字", "不规范", "主语", "重点词"])
+
+    def _is_covered_omission_false_positive(self, item: dict, target: SentenceAnalysis) -> bool:
+        error_type = str(item.get("error_type", ""))
+        comment = str(item.get("comment", ""))
+        evidence = str(item.get("evidence_text") or item.get("original_text") or "")
+        text = f"{error_type}{comment}{evidence}{target.original_classical}"
+        if "漏" not in text:
+            return False
+        source = self._clean_for_match(target.original_classical)
+        student = self._clean_for_match(target.student_translation)
+        if "小丘西行百二十步" in source or "从小丘西行百二十步" in source:
+            covered_groups = [
+                ("小丘",),
+                ("向西", "西行", "往西"),
+                ("百二十", "一百二十", "120"),
+                ("隔", "隔着"),
+                ("竹林", "篁竹"),
+            ]
+            covered = sum(1 for group in covered_groups if any(k in student for k in group))
+            return covered >= 4
+        return False
 
     def _is_known_false_positive(self, err: ErrorItem, target: SentenceAnalysis) -> bool:
         text = f"{err.original_text}{err.correct_text}{err.reason}{target.original_classical}"

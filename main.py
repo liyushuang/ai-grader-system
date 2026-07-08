@@ -25,7 +25,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 sys.path.insert(0, str(PROJECT_ROOT / "graders"))
 sys.path.insert(0, str(PROJECT_ROOT / "renderers"))
 
-from utils.env_loader import load_local_env
+from utils.env_loader import DEFAULT_ARK_BASE_URL, DEFAULT_ARK_MODEL, load_local_env, normalize_ark_env
 from grader_base import GradingInput, GradingResult
 
 load_local_env(PROJECT_ROOT)
@@ -75,7 +75,8 @@ def get_grader(name: str):
         dashscope_key = os.environ.get("DASHSCOPE_API_KEY", "")
         baidu_key = os.environ.get("BAIDU_API_KEY", "")
         baidu_secret = os.environ.get("BAIDU_SECRET_KEY", "")
-        ark_key = os.environ.get("ARK_API_KEY", "")
+        ark_base_url, ark_model = normalize_ark_env()
+        ark_key = os.environ.get("ARK_API_KEY", "") or os.environ.get("VOLCANO_API_KEY", "")
         if not ark_key:
             print("⚠️ 警告: ARK_API_KEY 环境变量未设置，方舟新模型将无法调用")
             print("   请设置: export ARK_API_KEY='你的方舟专属API Key'")
@@ -84,9 +85,9 @@ def get_grader(name: str):
             baidu_api_key=baidu_key,
             baidu_secret_key=baidu_secret,
             ark_api_key=ark_key,
-            ark_base_url=os.environ.get("ARK_BASE_URL", "https://ark.cn-beijing.volces.com/api/plan/v3"),
+            ark_base_url=ark_base_url,
             llm_provider="ark",
-            model=os.environ.get("ARK_MODEL", "ark-code-latest"),
+            model=ark_model,
         )
     
     else:
@@ -217,6 +218,10 @@ def main():
   export DASHSCOPE_API_KEY="sk-xxx"
   python main.py --image sample.jpg --grader qwen
 
+  # 方舟入口（融合流程）
+  export ARK_API_KEY="your-ark-key"
+  python main.py --image sample.jpg --grader ark_code
+
   # 百度手写OCR 模式（需要百度 API Key）
   export BAIDU_API_KEY="xxx" BAIDU_SECRET_KEY="xxx"
   python main.py --image sample.jpg --grader baidu
@@ -226,7 +231,7 @@ def main():
     parser.add_argument("--image", "-i", required=True, 
                         help="学生作业图片路径")
     parser.add_argument("--grader", "-g", default="mock", 
-                        help="批改策略: mock(模拟) / qwen(Qwen-VL-Max) / baidu(百度手写OCR)")
+                        help="批改策略: mock(模拟) / qwen(Qwen-VL-Max) / fusion(融合) / ark_code(方舟) / baidu(百度手写OCR)")
     parser.add_argument("--output", "-o", default=None, 
                         help="输出图片路径（默认: output/graded_result.jpg）")
     

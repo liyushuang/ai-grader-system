@@ -11,11 +11,11 @@ function setTool(tool) {
     currentTool = tool;
     
     // 更新工具栏按钮状态
-    ['toolSelect', 'toolWavy', 'toolLine', 'toolCircle'].forEach(id => {
+    ['toolSelect', 'toolWavy', 'toolLine', 'toolCircle', 'toolCheck'].forEach(id => {
         document.getElementById(id)?.classList.remove('active');
     });
     
-    const btnMap = { select: 'toolSelect', wavy: 'toolWavy', line: 'toolLine', circle: 'toolCircle' };
+    const btnMap = { select: 'toolSelect', wavy: 'toolWavy', line: 'toolLine', circle: 'toolCircle', check: 'toolCheck' };
     if (btnMap[tool]) {
         document.getElementById(btnMap[tool]).classList.add('active');
     }
@@ -130,7 +130,7 @@ function saveEdit() {
 
     window.annotationStore.update(sel.id, { comment, type });
 
-    if (type !== oldType) {
+    if (type !== oldType || ['circle', 'line', 'wavy'].includes(type)) {
         window.canvasManager.updateAnnotationStyle(sel);
     }
 
@@ -147,6 +147,18 @@ function saveEdit() {
     });
 
     showToast('批注已保存');
+}
+
+function applyQuickComment(text) {
+    const textarea = document.getElementById('editComment');
+    if (!textarea) return;
+    const current = textarea.value.trim();
+    textarea.value = current ? `${current}\n${text}` : text;
+    textarea.focus();
+    if (text.includes('“”')) {
+        const pos = textarea.value.indexOf('“”') + 1;
+        textarea.setSelectionRange(pos, pos);
+    }
 }
 
 function cancelEdit() {
@@ -321,7 +333,8 @@ function isFusionPipeline(grader) {
 function getGraderDisplayName(grader) {
     const names = {
         fusion: '千问 qwen3.6-max-preview 无思考',
-        ark_code: '方舟 ark-code-latest',
+        ark_code: `方舟 ${window.__arkModelLabel || 'doubao-seed-2-1-pro-260628'}`,
+        qwen: 'Qwen-VL-Max（视觉理解）',
     };
     return names[grader] || grader || '未知模型';
 }
@@ -340,7 +353,7 @@ function showFusionThinkingPanel(grader) {
         thinkingHeaderText.textContent = `AI 批改思考过程 · ${getGraderDisplayName(grader)}`;
     }
 
-    const stageIcons = { ocr: '🔍', clean: '🧹', align: '🧭', rule: '📐', llm: '🧠', fuse: '🔗' };
+    const stageIcons = { ocr: '🔍', clean: '🧹', align: '🧭', rule: '📚', llm: '🧠', fuse: '🔗' };
     document.querySelectorAll('.thinking-stage').forEach(el => {
         el.classList.remove('active', 'done');
         const icon = el.querySelector('.stage-icon');
@@ -490,7 +503,7 @@ const STAGE_PROGRESS = {
 };
 const STAGE_LABELS = {
     ocr: 'OCR识别', clean: '文本清洗', align: '标准对齐',
-    rule: '规则候选', llm: '模型批改', fuse: '坐标回填',
+    rule: '参考材料', llm: '模型批改', fuse: '坐标回填',
 };
 
 function normalizeStageId(stage) {
@@ -516,9 +529,14 @@ function handleStreamEvent(event, thinkingStages, thinkingOutput, thinkingProgre
             }
         });
         const d = event.data || {};
+        const metrics = d.pipeline_metrics || {};
+        const metricText = metrics.model_candidates !== undefined
+            ? `模型候选 ${metrics.model_candidates || 0} 条，成功定位 ${metrics.model_located || 0} 条，被过滤 ${metrics.model_rejected || 0} 条。`
+            : '';
         const finalHtml = [
             `<div class="llm-final">`,
             `<strong>模型批改结论</strong>：${escapeHtml(d.total_score || '')}/100，发现 ${escapeHtml(d.total_errors || 0)} 处需要处理的问题。`,
+            metricText ? `<br>${escapeHtml(metricText)}` : '',
             d.overall_comment ? `<br>${escapeHtml(d.overall_comment)}` : '',
             `</div>`,
         ].join('');
@@ -760,6 +778,7 @@ function normalizeGradingData(raw, annotations = []) {
         sentence_analyses: Array.isArray(d.sentence_analyses) ? d.sentence_analyses : [],
         grader_name: d.grader_name || 'fusion',
         processing_time_ms: d.processing_time_ms || 0,
+        pipeline_metrics: d.pipeline_metrics || {},
         annotations: annotations || d.annotations || [],
     };
 }

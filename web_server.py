@@ -26,21 +26,27 @@ sys.path.insert(0, str(PROJECT_ROOT / "renderers"))
 from grader_base import GradingInput, Annotation, AnnotationType, AnnotationSource
 from main import get_grader
 from grading_renderer import GradingRenderer
+from utils.env_loader import DEFAULT_ARK_BASE_URL, DEFAULT_ARK_MODEL, load_local_env, normalize_ark_env
 from utils.annotation_utils import generate_annotations_from_result, annotations_to_dict_list, annotations_from_dict_list
 
-# 兜底：如果环境变量未设置，使用硬编码的 API Key
-if not os.environ.get("BAIDU_API_KEY"):
-    os.environ["BAIDU_API_KEY"] = "6QzUZkERoW31P0kZlpoA8Seh"
-if not os.environ.get("BAIDU_SECRET_KEY"):
-    os.environ["BAIDU_SECRET_KEY"] = "bmCwZukpPIUxAvssGdS12m9ITj5UhWod"
-if not os.environ.get("DASHSCOPE_API_KEY"):
-    os.environ["DASHSCOPE_API_KEY"] = "sk-ws-H.EMDIIYR.jtU9.MEQCIDg63k7FDifjcSOhZIrLlfmhEyb7or87x8Ka3ljuyrKFAiA9kSj93j6TJaUlazt1R_IS1QC-DWan69IoLEyeIbaZhw"
+load_local_env(PROJECT_ROOT)
+if not os.environ.get("VOLCANO_API_KEY") and os.environ.get("ARK_API_KEY"):
+    os.environ["VOLCANO_API_KEY"] = os.environ["ARK_API_KEY"]
 if not os.environ.get("ARK_BASE_URL"):
-    os.environ["ARK_BASE_URL"] = "https://ark.cn-beijing.volces.com/api/plan/v3"
+    os.environ["ARK_BASE_URL"] = DEFAULT_ARK_BASE_URL
 if not os.environ.get("ARK_MODEL"):
-    os.environ["ARK_MODEL"] = "ark-code-latest"
+    os.environ["ARK_MODEL"] = DEFAULT_ARK_MODEL
+normalize_ark_env()
 
 app = Flask(__name__)
+
+
+@app.context_processor
+def inject_runtime_config():
+    return {
+        "ark_model_label": os.environ.get("ARK_MODEL", DEFAULT_ARK_MODEL),
+        "ark_base_url": os.environ.get("ARK_BASE_URL", DEFAULT_ARK_BASE_URL),
+    }
 
 # HTML 模板 — 标注编辑器版本
 HTML_TEMPLATE = """
@@ -97,8 +103,8 @@ HTML_TEMPLATE = """
         .tool-separator { width: 1px; height: 28px; background: rgba(255,255,255,0.16); margin: 0 4px; }
         
         /* ── Canvas 区域 ── */
-        .canvas-area { flex: 1 1 auto; min-width: 500px; display: flex; flex-direction: column; align-items: flex-end; justify-content: center;
-                       background: #eef2f6; overflow: hidden; position: relative; padding: 20px 24px 78px 24px; }
+        .canvas-area { flex: 1 1 auto; min-width: 500px; display: flex; flex-direction: column; align-items: center; justify-content: center;
+                       background: #eef2f6; overflow: hidden; position: relative; padding: 20px 40px 78px 40px; }
         .canvas-container, .canvas-container canvas, #annotationCanvas { box-shadow: 0 10px 28px rgba(15,23,42,0.14); border-radius: 2px; }
         .canvas-upload-hint { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%);
             text-align: center; color: #999; pointer-events: none; }
@@ -111,25 +117,17 @@ HTML_TEMPLATE = """
         
         /* ── 旁批面板 ── */
         .side-by-side-panel {
-            width: 390px;
-            background: #ffffff;
-            border-left: 1px solid #e5e7eb;
-            position: relative;
-            overflow-y: auto;
-            overflow-x: hidden;
-            flex-shrink: 0;
-            height: 100%;
-            padding-right: 18px;
+            display: none;
         }
         .side-by-side-panel::before {
-            content: '详细点评';
+            content: '行内批注';
             position: sticky;
             top: 0;
             display: block;
-            padding: 16px 22px 12px 44px;
+            padding: 12px 18px 10px 36px;
             background: rgba(255,255,255,0.94);
             backdrop-filter: blur(8px);
-            color: #2563eb;
+            color: #64748b;
             font-size: 13px;
             font-weight: 700;
             z-index: 3;
@@ -137,8 +135,8 @@ HTML_TEMPLATE = """
         }
         .side-card {
             position: absolute;
-            width: calc(100% - 46px);
-            left: 36px;
+            width: calc(100% - 40px);
+            left: 34px;
             background: transparent;
             border: 0;
             border-radius: 4px;
@@ -191,6 +189,7 @@ HTML_TEMPLATE = """
         .side-card .card-badge.wavy { background: #10b981; }
         .side-card .card-badge.line { background: #ef4444; }
         .side-card .card-badge.circle { background: #ef4444; }
+        .side-card .card-badge.check { background: #ef4444; }
         .side-card .card-badge.star { background: #f59e0b; }
         .side-card .card-type {
             font-size: 12px;
@@ -200,10 +199,11 @@ HTML_TEMPLATE = """
         .side-card .card-type.line { color: #dc2626; }
         .side-card .card-type.circle { color: #dc2626; }
         .side-card .card-type.star { color: #d97706; }
+        .side-card .card-type.check { color: #dc2626; }
         .side-card .card-comment {
-            font-size: 22px;
-            color: #ef2f2f;
-            line-height: 1.85;
+            font-size: 15px;
+            color: #dc2626;
+            line-height: 1.65;
             font-weight: 700;
             word-break: break-word;
             font-family: 'Kaiti SC', 'STKaiti', 'KaiTi', 'PingFang SC', serif;
@@ -213,6 +213,19 @@ HTML_TEMPLATE = """
                 0 1px 0 rgba(255,255,255,0.95),
                 0 0 1px rgba(255,255,255,0.85);
         }
+        .quick-comment-row { display: flex; flex-wrap: wrap; gap: 6px; margin: -4px 0 10px; }
+        .quick-comment {
+            border: 1px solid #fecaca;
+            background: #fff5f5;
+            color: #b91c1c;
+            border-radius: 6px;
+            padding: 5px 8px;
+            font-size: 12px;
+            font-weight: 700;
+            cursor: pointer;
+            transition: all 0.16s ease;
+        }
+        .quick-comment:hover { background: #fee2e2; transform: translateY(-1px); }
         .side-card .card-evidence {
             margin-top: 6px;
             display: flex;
@@ -404,12 +417,14 @@ HTML_TEMPLATE = """
         .ann-item .ann-icon.line { background: #fee2e2; color: #dc2626; }
         .ann-item .ann-icon.circle { background: #fee2e2; color: #dc2626; }
         .ann-item .ann-icon.star { background: #fef3c7; color: #d97706; }
+        .ann-item .ann-icon.check { background: #fee2e2; color: #dc2626; }
         .ann-item .ann-content { flex: 1; min-width: 0; }
         .ann-item .ann-type-label { font-size: 11px; font-weight: 600; margin-bottom: 2px; }
         .ann-item .ann-type-label.wavy { color: #059669; }
         .ann-item .ann-type-label.line { color: #dc2626; }
         .ann-item .ann-type-label.circle { color: #dc2626; }
         .ann-item .ann-type-label.star { color: #d97706; }
+        .ann-item .ann-type-label.check { color: #dc2626; }
         .ann-item .ann-comment { font-size: 12px; color: #555; line-height: 1.4; 
                                  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
         .ann-item .ann-source { font-size: 10px; color: #aaa; margin-top: 2px; }
@@ -631,9 +646,10 @@ HTML_TEMPLATE = """
             <div class="tool-drag-handle" id="toolbarDragHandle" title="拖动工具栏">⋮</div>
             <button class="tool-btn" data-tooltip="选择/移动 (V)" id="toolSelect" onclick="setTool('select')">🖱️</button>
             <div class="tool-separator"></div>
-            <button class="tool-btn" data-tooltip="波浪线 — 点睛句 (W)" id="toolWavy" onclick="setTool('wavy')" style="color:#059669;">∼</button>
+            <button class="tool-btn" data-tooltip="点睛句 (W)" id="toolWavy" onclick="setTool('wavy')" style="color:#059669;">∼</button>
             <button class="tool-btn" data-tooltip="横线 — 问题句 (L)" id="toolLine" onclick="setTool('line')" style="color:#dc2626;">—</button>
             <button class="tool-btn" data-tooltip="圆圈 — 错字词 (C)" id="toolCircle" onclick="setTool('circle')" style="color:#dc2626;">○</button>
+            <button class="tool-btn" data-tooltip="对勾 — 翻译正确 (K)" id="toolCheck" onclick="setTool('check')" style="color:#dc2626;">✓</button>
             <div class="tool-separator"></div>
             <button class="tool-btn" data-tooltip="删除选中 (Del)" onclick="deleteSelected()">🗑️</button>
             <div class="tool-separator"></div>
@@ -657,7 +673,7 @@ HTML_TEMPLATE = """
                             </div>
                             <div class="grader-option">
                                 <input type="radio" id="graderArkCode" name="grader" value="ark_code">
-                                <label for="graderArkCode">方舟新模型（ark-code-latest）</label>
+                                <label for="graderArkCode">方舟（{{ ark_model_label }}）</label>
                             </div>
                             <div class="grader-option">
                                 <input type="radio" id="graderQwen" name="grader" value="qwen">
@@ -693,7 +709,7 @@ HTML_TEMPLATE = """
                         <div class="thinking-stage" id="stage-ocr"><span class="stage-icon">🔍</span>OCR识别</div>
                         <div class="thinking-stage" id="stage-clean"><span class="stage-icon">🧹</span>文本清洗</div>
                         <div class="thinking-stage" id="stage-align"><span class="stage-icon">🧭</span>标准对齐</div>
-                        <div class="thinking-stage" id="stage-rule"><span class="stage-icon">📐</span>规则候选</div>
+                        <div class="thinking-stage" id="stage-rule"><span class="stage-icon">📚</span>参考材料</div>
                         <div class="thinking-stage" id="stage-llm"><span class="stage-icon">🧠</span>模型批改</div>
                         <div class="thinking-stage" id="stage-fuse"><span class="stage-icon">🔗</span>坐标回填</div>
                     </div>
@@ -732,11 +748,18 @@ HTML_TEMPLATE = """
             </div>
             <label>标注类型</label>
             <select id="editType" onchange="onEditTypeChange()">
-                <option value="wavy">～～ 波浪线（点睛句）</option>
+                <option value="wavy">～～ 点睛句</option>
                 <option value="line">—— 横线（问题句）</option>
                 <option value="circle">○ 圆圈（错字词）</option>
+                <option value="check">✓ 对勾（翻译正确）</option>
             </select>
             <label>批注文字</label>
+            <div class="quick-comment-row">
+                <button type="button" class="quick-comment" onclick="applyQuickComment('点睛句★\\n画面感好')">点睛句★</button>
+                <button type="button" class="quick-comment" onclick="applyQuickComment('建议改为“”')">建议改为</button>
+                <button type="button" class="quick-comment" onclick="applyQuickComment('翻译准确，表达完整')">翻译准确</button>
+                <button type="button" class="quick-comment" onclick="applyQuickComment('语句不够通顺，可再精简')">不够通顺</button>
+            </div>
             <textarea id="editComment" placeholder="输入批注说明..."></textarea>
             <div class="edit-actions">
                 <button class="edit-btn save" onclick="saveEdit()">保存</button>
@@ -748,9 +771,10 @@ HTML_TEMPLATE = """
     
     <!-- 上下文菜单 -->
     <div class="context-menu" id="contextMenu">
-        <div class="menu-item" onclick="contextSwitchType('wavy')">～～ 改为波浪线</div>
+        <div class="menu-item" onclick="contextSwitchType('wavy')">～～ 改为点睛句</div>
         <div class="menu-item" onclick="contextSwitchType('line')">—— 改为横线</div>
         <div class="menu-item" onclick="contextSwitchType('circle')">○ 改为圆圈</div>
+        <div class="menu-item" onclick="contextSwitchType('check')">✓ 改为对勾</div>
         <div class="menu-divider"></div>
         <div class="menu-item danger" onclick="deleteSelected()">🗑️ 删除</div>
     </div>
@@ -800,6 +824,7 @@ HTML_TEMPLATE = """
     window.__demoSession = {{ demo_json | safe }};
     {% endif %}
     window.__pageMode = {{ (page_mode | default("upload")) | tojson }};
+    window.__arkModelLabel = {{ ark_model_label | tojson }};
     </script>
     
     <script src="/static/js/core/UndoManager.js"></script>
@@ -808,6 +833,7 @@ HTML_TEMPLATE = """
     <script src="/static/js/annotations/StraightLine.js"></script>
     <script src="/static/js/annotations/StarAnnotation.js"></script>
     <script src="/static/js/annotations/CircleAnnotation.js"></script>
+    <script src="/static/js/annotations/CheckAnnotation.js"></script>
     <script src="/static/js/core/CanvasManager.js"></script>
     <script src="/static/js/components/SidePanel.js"></script>
     <script src="/static/js/components/GradingReportPanel.js"></script>
@@ -850,9 +876,11 @@ def _friendly_model_error(message: str) -> str:
     text = str(message or "")
     lower = text.lower()
     if "model_not_found" in lower or "does not exist or you do not have access" in lower:
+        if "doubao" in lower or "seed-2-1" in lower:
+            return "方舟模型不可用：当前 ARK_API_KEY 与 model 配置不匹配，或未开通该模型。"
         return "千问模型不可用：当前 DashScope Key 没有 qwen3.6-max-preview 权限，或模型名与控制台不一致。"
     if "authenticationerror" in lower or "unauthorized" in lower or "missing or invalid" in lower:
-        return "方舟调用失败：请确认 ARK_API_KEY 与 ARK_BASE_URL=https://ark.cn-beijing.volces.com/api/plan/v3 配套。"
+        return f"方舟调用失败：请确认 ARK_API_KEY 与 ARK_BASE_URL={os.environ.get('ARK_BASE_URL', DEFAULT_ARK_BASE_URL)} 配套。"
     if "api key" in lower and ("未配置" in text or "not configured" in lower):
         return text
     if len(text) > 180:
@@ -945,6 +973,7 @@ def _build_result_dict(result, annotations):
         "grader_name": result.grader_name,
         "processing_time_ms": result.processing_time_ms,
         "pipeline_debug_path": getattr(result, "pipeline_debug_path", ""),
+        "pipeline_metrics": getattr(result, "pipeline_metrics", {}),
         "annotations": annotations_to_dict_list(annotations),
         "sentence_analyses": [
             {
@@ -991,6 +1020,9 @@ def _build_demo_session():
             "source": "ai",
             "sentence_index": 0,
             "error_index": 0,
+            "error_type": "实词错误",
+            "original_text": "佩环",
+            "correct_text": "腰间的玉佩和玉环相碰撞",
             "comment": "佩环：腰间的玉佩和玉环相碰撞",
         },
         {
@@ -1003,6 +1035,9 @@ def _build_demo_session():
             "source": "ai",
             "sentence_index": 1,
             "error_index": 0,
+            "error_type": "漏译",
+            "original_text": "我",
+            "correct_text": "我",
             "comment": "补主语：我",
         },
         {
@@ -1015,7 +1050,48 @@ def _build_demo_session():
             "source": "ai",
             "sentence_index": 3,
             "error_index": 0,
+            "error_type": "错字",
+            "original_text": "飘浮",
+            "correct_text": "飘拂",
             "comment": "错字：飘拂",
+        },
+        {
+            "id": "demo_ann_4",
+            "type": "check",
+            "start_x": 678,
+            "start_y": 620,
+            "end_x": 748,
+            "end_y": 660,
+            "source": "teacher",
+            "sentence_index": 2,
+            "error_index": None,
+            "comment": "翻译准确",
+        },
+        {
+            "id": "demo_ann_5",
+            "type": "wavy",
+            "start_x": 144,
+            "start_y": 720,
+            "end_x": 480,
+            "end_y": 720,
+            "source": "ai",
+            "sentence_index": 2,
+            "error_index": None,
+            "comment": "整体能按原文顺序翻译",
+        },
+        {
+            "id": "demo_ann_6",
+            "type": "circle",
+            "start_x": 910,
+            "start_y": 1340,
+            "end_x": 982,
+            "end_y": 1410,
+            "source": "ai",
+            "sentence_index": 3,
+            "error_index": 0,
+            "comment": "飘拂",
+            "error_type": "错字",
+            "correct_text": "飘拂",
         },
     ]
 
@@ -1244,6 +1320,7 @@ def _do_grade(request, return_html=True):
             "parent_feedback": result.parent_feedback,
             "system_tags": result.system_tags,
             "pipeline_debug_path": getattr(result, "pipeline_debug_path", ""),
+            "pipeline_metrics": getattr(result, "pipeline_metrics", {}),
             "annotations": annotations_to_dict_list(result.annotations),
             "annotation_version": result.annotation_version,
             "sentence_analyses": [

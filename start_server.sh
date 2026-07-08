@@ -1,7 +1,16 @@
 #!/bin/bash
-export VOLCANO_API_KEY=ark-ddbae8e5-c1ad-4200-8b1d-b8483adca0c6-9eda7
-export BAIDU_API_KEY=6QzUZkERoW31P0kZlpoA8Seh
-export BAIDU_SECRET_KEY=bmCwZukpPIUxAvssGdS12m9ITj5UhWod
-export DASHSCOPE_API_KEY=sk-ws-H.EMDIIYR.jtU9.MEQCIDg63k7FDifjcSOhZIrLlfmhEyb7or87x8Ka3ljuyrKFAiA9kSj93j6TJaUlazt1R_IS1QC-DWan69IoLEyeIbaZhw
-cd /workspace/poc_grader
-exec python3 web_server.py > /tmp/web_server.log 2>&1
+export VOLCANO_API_KEY="${VOLCANO_API_KEY:-}"
+export ARK_API_KEY="${ARK_API_KEY:-$VOLCANO_API_KEY}"
+export ARK_BASE_URL="${ARK_BASE_URL:-https://ark.cn-beijing.volces.com/api/v3}"
+export ARK_MODEL="${ARK_MODEL:-doubao-seed-2-1-pro-260628}"
+if [ "$ARK_BASE_URL" = "https://ark.cn-beijing.volces.com/api/plan/v3" ]; then
+  export ARK_BASE_URL="https://ark.cn-beijing.volces.com/api/v3"
+fi
+if [ "$ARK_MODEL" = "ark-code-latest" ]; then
+  export ARK_MODEL="doubao-seed-2-1-pro-260628"
+fi
+export BAIDU_API_KEY="${BAIDU_API_KEY:-}"
+export BAIDU_SECRET_KEY="${BAIDU_SECRET_KEY:-}"
+export DASHSCOPE_API_KEY="${DASHSCOPE_API_KEY:-}"
+cd "$(dirname "$0")"
+exec .venv/bin/python web_server.py > /tmp/web_server.log 2>&1

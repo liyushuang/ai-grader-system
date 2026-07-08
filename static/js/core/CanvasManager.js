@@ -106,14 +106,13 @@ class CanvasManager {
             }
         });
 
-        let displayIndex = 0;
         annotations.forEach((ann) => {
-            const badgeIndex = ann.type === 'circle' ? null : ++displayIndex;
-            const fabricObj = this._createAnnotationObject(ann, badgeIndex);
+            const fabricObj = this._createAnnotationObject(ann);
             if (fabricObj) {
                 fabricObj.annId = ann.id;
                 this.fabric.add(fabricObj);
                 ann.fabricObject = fabricObj;
+                this._addInlineCommentObject(ann);
             }
         });
 
@@ -151,7 +150,7 @@ class CanvasManager {
      * 创建单个标注的 Fabric 对象
      * 后端坐标已经是原图上的最终标注位置，前端只做缩放映射。
      */
-    _createAnnotationObject(ann, index = null) {
+    _createAnnotationObject(ann) {
         const p1 = this._imageToSceneCoords(ann.startX, ann.startY);
         const p2 = this._imageToSceneCoords(ann.endX, ann.endY);
         const sx1 = p1.x;
@@ -173,16 +172,144 @@ class CanvasManager {
                 });
                 break;
             case 'star':
-                obj = StarAnnotation.create(sx1, sy1);
+                obj = WavyLine.create(sx1, sy1, sx2 || sx1 + 80, sy1);
                 break;
-        }
-        if (obj && index !== null) {
-            this._attachNumberBadge(obj, sx1, sy1, index);
+            case 'check':
+                obj = CheckAnnotation.create(sx1, sy1, sx2, sy2);
+                break;
         }
         return obj;
     }
 
+    _addInlineCommentObject(ann) {
+        if (!['line', 'wavy'].includes(ann.type)) return null;
+        const p2 = this._imageToSceneCoords(ann.endX, ann.endY);
+        const objects = this._createInlineCommentObjects(ann, p2.x, p2.y);
+        if (!objects.length) return null;
+        objects.forEach(obj => {
+            obj.annId = ann.id;
+            obj.annotationType = 'inlineComment';
+            obj.relatedAnnotationType = ann.type;
+            this.fabric.add(obj);
+        });
+        ann.inlineCommentObject = objects[objects.length - 1];
+        return ann.inlineCommentObject;
+    }
+
+    _createInlineCommentObjects(ann, x, y) {
+        const rawText = this._getInlineCommentText(ann);
+        const isPinpoint = this._shouldKeepCommentNearText(ann);
+        const text = isPinpoint ? rawText : this._getLineEndCommentText(ann, rawText);
+        if (!text) return [];
+
+        const fill = (ann.type === 'wavy' || ann.type === 'star')
+            ? '#10B981'
+            : (ann.error_type === '漏译' ? '#2563EB' : '#E11D2E');
+        const style = {
+            top: y - 24,
+            originX: 'left',
+            originY: 'top',
+            fill,
+            fontSize: isPinpoint ? 17 : 15,
+            fontWeight: '700',
+            fontFamily: '"PingFang SC", "Microsoft YaHei", sans-serif',
+            stroke: '#fff',
+            strokeWidth: 2,
+            paintFirst: 'stroke',
+            selectable: true,
+            evented: true,
+            hasControls: false,
+            hasBorders: false,
+            hoverCursor: 'pointer',
+            objectCaching: true,
+        };
+        if (isPinpoint) {
+            return [new fabric.Text(text, { left: x + 10, ...style })];
+        }
+
+        const labelLeft = this._getLineEndCommentLeft();
+        const labelTop = y - 22;
+        const label = new fabric.Textbox(text, {
+            left: labelLeft,
+            top: labelTop,
+            width: this._getLineEndCommentWidth(),
+            textAlign: 'left',
+            splitByGrapheme: true,
+            ...style,
+        });
+        return [label];
+    }
+
+    _shouldKeepCommentNearText(ann) {
+        const text = `${ann.error_type || ''} ${ann.comment || ''} ${ann.reason || ''}`;
+        return /错字|错别字|不规范字|漏字/.test(text);
+    }
+
+    _getLineEndCommentLeft() {
+        const bg = this.fabric?.backgroundImage;
+        const imageW = bg ? bg.getScaledWidth() : 420;
+        return Math.max(8, imageW - this._getLineEndCommentWidth() - 16);
+    }
+
+    _getLineEndCommentWidth() {
+        const bg = this.fabric?.backgroundImage;
+        const imageW = bg ? bg.getScaledWidth() : 420;
+        return Math.max(110, Math.min(150, imageW * 0.28));
+    }
+
+    _getInlineCommentText(ann) {
+        const type = ann.error_type || '';
+        const correct = String(ann.correct_text || '').trim();
+        const comment = String(ann.comment || '').trim();
+        if (type === '漏译' && correct) return `补：${correct}`;
+        if (comment.startsWith('补') || comment.includes('漏译')) {
+            return comment.replace(/^建议/, '').slice(0, 16);
+        }
+        if (comment.length <= 12 && !comment.includes('：')) return comment;
+        const compact = comment
+            .replace(/^建议改为[:：]?/, '改：')
+            .replace(/^错字[:：]?/, '')
+            .replace(/^实词错误[:：]?/, '')
+            .trim();
+        return compact.length <= 14 ? compact : '';
+    }
+
+    _getLineEndCommentText(ann, text) {
+        const type = String(ann.error_type || '');
+        const original = String(ann.original_text || '').trim();
+        const correct = String(ann.correct_text || '').trim();
+        const comment = String(text || ann.comment || '').trim();
+        if (type === '漏译' && (correct || original)) return `补：${correct || original}`;
+        if (ann.type === 'wavy') return comment.startsWith('点睛句') ? '点睛句★' : '点睛句★';
+        if (type.includes('实词') && original) return this._compactLineEndText(`${original}误`);
+        if (type.includes('句意')) return '句意不准';
+        if (type.includes('语义') || comment.includes('重复')) return '语义重复';
+        if (type.includes('语序')) return '语序不当';
+        if (original.includes('形异') || correct.includes('形态') || comment.includes('形异')) return '形态表达';
+        if (original && correct) return this._compactLineEndText(`${original}误`);
+        if (comment) return this._compactLineEndText(comment);
+        return '';
+    }
+
+    _compactLineEndText(text) {
+        const compact = String(text || '')
+            .replace(/^实词错误[:：]?/, '')
+            .replace(/^句意错误[:：]?/, '')
+            .replace(/^语义重复[:：]?/, '语义重复')
+            .replace(/^建议改为[:：]?/, '改：')
+            .replace(/腰间的/g, '')
+            .replace(/玉佩和玉环相碰撞/g, '玉佩相撞')
+            .replace(/相碰撞/g, '相撞')
+            .replace(/的声音/g, '')
+            .replace(/：.*$/, '误')
+            .trim();
+        return compact.length > 6 ? compact.slice(0, 6) + '…' : compact;
+    }
+
     _getCircleCorrectionText(ann) {
+        if (ann.correct_text) {
+            return String(ann.correct_text).trim();
+        }
         const comment = ann.comment || '';
         const arrow = comment.includes('→') ? comment.split('→').pop() : '';
         if (arrow) return arrow.trim().replace(/[。；;，,].*$/, '');
@@ -236,12 +363,12 @@ class CanvasManager {
      * 添加单个标注到画布
      */
     addAnnotation(ann) {
-        const index = window.annotationStore ? window.annotationStore.getAll().findIndex(a => a.id === ann.id) + 1 : null;
-        const obj = this._createAnnotationObject(ann, index || null);
+        const obj = this._createAnnotationObject(ann);
         if (obj) {
             obj.annId = ann.id;
             this.fabric.add(obj);
             ann.fabricObject = obj;
+            this._addInlineCommentObject(ann);
             this.fabric.setActiveObject(obj);
             this.fabric.renderAll();
             this._updateStatusBar();
@@ -254,6 +381,9 @@ class CanvasManager {
      */
     removeAnnotation(annId) {
         const obj = this.fabric.getObjects().find(o => o.annId === annId);
+        this.fabric.getObjects()
+            .filter(o => o.annotationType === 'inlineComment' && o.annId === annId)
+            .forEach(o => this.fabric.remove(o));
         if (obj) {
             this.fabric.remove(obj);
             if (window.annotationStore) {
@@ -280,21 +410,26 @@ class CanvasManager {
         const sy2 = p2.y;
 
         let newObj = null;
-        const index = window.annotationStore ? window.annotationStore.getAll().findIndex(a => a.id === ann.id) + 1 : null;
         switch (ann.type) {
             case 'wavy': newObj = WavyLine.create(sx1, sy1, sx2, sy2); break;
             case 'line': newObj = StraightLine.create(sx1, sy1, sx2, sy2); break;
-            case 'circle': newObj = CircleAnnotation.create(sx1, sy1, sx2, sy2); break;
-            case 'star': newObj = StarAnnotation.create(sx1, sy1); break;
+            case 'circle': newObj = CircleAnnotation.create(sx1, sy1, sx2, sy2, {
+                correctionText: this._getCircleCorrectionText(ann),
+            }); break;
+            case 'star': newObj = WavyLine.create(sx1, sy1, sx2 || sx1 + 80, sy1); break;
+            case 'check': newObj = CheckAnnotation.create(sx1, sy1, sx2, sy2); break;
         }
 
         if (newObj) {
-            if (index) this._attachNumberBadge(newObj, sx1, sy1, index);
             newObj.annId = ann.id;
             const idx = this.fabric.getObjects().indexOf(oldObj);
             this.fabric.remove(oldObj);
+            this.fabric.getObjects()
+                .filter(o => o.annotationType === 'inlineComment' && o.annId === ann.id)
+                .forEach(o => this.fabric.remove(o));
             this.fabric.insertAt(idx, newObj);
             ann.fabricObject = newObj;
+            this._addInlineCommentObject(ann);
             this.fabric.setActiveObject(newObj);
             this.fabric.renderAll();
         }
@@ -404,7 +539,7 @@ class CanvasManager {
             case 'line':
                 this.drawPreview = new fabric.Line(
                     [this.drawStartX, this.drawStartY, pointer.x, pointer.y],
-                    { stroke: '#EF4444', strokeWidth: 2, strokeDashArray: dashPattern, selectable: false, evented: false }
+                    { stroke: '#E11D2E', strokeWidth: 2.4, strokeDashArray: dashPattern, selectable: false, evented: false }
                 );
                 break;
             case 'circle':
@@ -415,8 +550,8 @@ class CanvasManager {
                     ry: Math.max(6, Math.abs(pointer.y - this.drawStartY) / 2),
                     originX: 'left',
                     originY: 'top',
-                    fill: 'rgba(239,68,68,0.04)',
-                    stroke: '#EF4444',
+                    fill: 'rgba(225,29,46,0.04)',
+                    stroke: '#E11D2E',
                     strokeWidth: 2,
                     strokeDashArray: dashPattern,
                     selectable: false,
@@ -424,10 +559,11 @@ class CanvasManager {
                 });
                 break;
             case 'star':
+            case 'check':
                 this.drawPreview = new fabric.Circle({
                     left: pointer.x - 10, top: pointer.y - 10,
-                    radius: 10, fill: 'rgba(245,158,11,0.3)',
-                    stroke: '#F59E0B', strokeWidth: 2, strokeDashArray: dashPattern,
+                    radius: 10, fill: currentTool === 'check' ? 'rgba(225,29,46,0.18)' : 'rgba(245,158,11,0.3)',
+                    stroke: currentTool === 'check' ? '#E11D2E' : '#F59E0B', strokeWidth: 2, strokeDashArray: dashPattern,
                     selectable: false, evented: false,
                 });
                 break;
@@ -455,7 +591,7 @@ class CanvasManager {
         const dist = Math.sqrt(dx * dx + dy * dy);
 
         // 最小距离阈值（防止误点）
-        if (currentTool === 'star' ? dist < 5 : dist < 12) {
+        if (['star', 'check'].includes(currentTool) ? dist < 5 : dist < 12) {
             this.fabric.renderAll();
             return;
         }
@@ -519,7 +655,7 @@ class CanvasManager {
         if (active) {
             group.set({ borderColor: '#4a90d9', borderScaleFactor: 1.2 });
         } else {
-            const colors = { wavy: '#10B981', line: '#EF4444', circle: '#EF4444', star: '#F59E0B' };
+            const colors = { wavy: '#10B981', line: '#EF4444', circle: '#EF4444', star: '#10B981', check: '#E11D2E' };
             group.set({ borderColor: colors[group.annotationType] || '#333', borderScaleFactor: 1 });
         }
         this.fabric.renderAll();
@@ -618,6 +754,10 @@ class CanvasManager {
             case 'c':
             case 'C':
                 setTool('circle');
+                break;
+            case 'k':
+            case 'K':
+                setTool('check');
                 break;
             case 'v':
             case 'V':

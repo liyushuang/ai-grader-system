@@ -169,6 +169,7 @@ class GradingReportPanel {
         const lineItems = annotations.filter(a => a.type === 'line');
         const circleItems = annotations.filter(a => a.type === 'circle');
         const wavyItems = annotations.filter(a => a.type === 'wavy');
+        const checkItems = annotations.filter(a => a.type === 'check');
         const correctionItems = [...lineItems, ...circleItems];
         const errorItems = correctionItems.length ? [] : this._collectErrors(d);
 
@@ -179,6 +180,7 @@ class GradingReportPanel {
         ].slice(0, 6);
         const strengths = [
             ...wavyItems.map(a => a.comment || '这处是文章理解的关键句，建议重点记忆。'),
+            ...checkItems.map(a => a.comment || '这处重点字词翻译准确。'),
             ...(d.strengths || [])
         ].slice(0, 5);
         const pitfalls = [
@@ -240,6 +242,10 @@ class GradingReportPanel {
     _formatCorrectionWithEvidence(annotation, data) {
         const text = this._compactCorrectionText(annotation.comment) || '这处需要重新订正，注意和原文逐字对应。';
         const detail = this._getAnnotationErrorDetail(annotation, data);
+        const raw = `${annotation.comment || ''}${annotation.original_text || ''}${annotation.correct_text || ''}${detail?.reason || ''}`;
+        if (raw.includes('形异')) {
+            return '表达生硬：“形异”不够自然，建议改为“形态各异”或“呈现不同形态”。';
+        }
         if (!detail) return text;
         const label = detail.errorType ? `${detail.errorType}：` : '';
         const reason = detail.reason ? `（依据：${detail.reason}）` : '';
@@ -248,9 +254,17 @@ class GradingReportPanel {
 
     _getAnnotationErrorDetail(annotation, data) {
         if (!annotation || !data) return null;
+        if (annotation.error_type || annotation.reason) {
+            return {
+                errorType: annotation.error_type || '',
+                reason: annotation.reason || ''
+            };
+        }
         const analyses = data.sentence_analyses || [];
-        const sentence = analyses[Number(annotation.sentence_index)];
-        const error = sentence && sentence.errors ? sentence.errors[Number(annotation.error_index)] : null;
+        const sentenceIndex = annotation.sentenceIndex ?? annotation.sentence_index;
+        const errorIndex = annotation.errorIndex ?? annotation.error_index;
+        const sentence = analyses[Number(sentenceIndex)];
+        const error = sentence && sentence.errors ? sentence.errors[Number(errorIndex)] : null;
         if (!error) return null;
         return {
             errorType: error.error_type || '',

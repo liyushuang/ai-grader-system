@@ -14,7 +14,7 @@ class AnnotationStore {
     load(annDataList) {
         this.annotations = annDataList.map((d, i) => ({
             id: d.id || `ann_${i}`,
-            type: d.type,
+            type: d.type === 'star' ? 'wavy' : d.type,
             startX: d.start_x,
             startY: d.start_y,
             endX: d.end_x,
@@ -23,6 +23,10 @@ class AnnotationStore {
             sentenceIndex: d.sentence_index,
             errorIndex: d.error_index,
             comment: d.comment || '',
+            error_type: d.error_type || '',
+            reason: d.reason || '',
+            original_text: d.original_text || '',
+            correct_text: d.correct_text || '',
             fabricObject: null,  // 关联的 Fabric 对象引用
         }));
         this.selectedId = null;
@@ -56,6 +60,10 @@ class AnnotationStore {
             sentenceIndex: annotation.sentenceIndex ?? null,
             errorIndex: annotation.errorIndex ?? null,
             comment: annotation.comment || '',
+            error_type: annotation.error_type || '',
+            reason: annotation.reason || '',
+            original_text: annotation.original_text || '',
+            correct_text: annotation.correct_text || '',
             fabricObject: annotation.fabricObject || null,
         };
         this.annotations.push(ann);
@@ -124,6 +132,10 @@ class AnnotationStore {
             sentence_index: a.sentenceIndex,
             error_index: a.errorIndex,
             comment: a.comment,
+            error_type: a.error_type,
+            reason: a.reason,
+            original_text: a.original_text,
+            correct_text: a.correct_text,
         }));
     }
 

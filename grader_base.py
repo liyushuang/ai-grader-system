@@ -28,10 +28,11 @@ class ErrorType(str, Enum):
 
 class AnnotationType(str, Enum):
     """符号标注类型"""
-    WAVY = "wavy"        # 波浪线 — 精彩句
+    WAVY = "wavy"        # 点睛句 — 波浪线呈现
     LINE = "line"        # 横线 — 问题句
     CIRCLE = "circle"    # 圆圈 — 错字/错词
-    STAR = "star"        # 星星 — 点睛句
+    STAR = "star"        # 已废弃：旧数据兼容为 wavy
+    CHECK = "check"      # 对勾 — 重点字词翻译正确
 
 
 class AnnotationSource(str, Enum):
@@ -150,7 +151,7 @@ class Annotation:
             self.updated_at = now
 
     def to_dict(self) -> dict:
-        return {
+        data = {
             "id": self.id,
             "type": self.annotation_type.value,
             "start_x": self.start_x,
@@ -165,10 +166,15 @@ class Annotation:
             "updated_at": self.updated_at,
             "created_by": self.created_by,
         }
+        for key in ("error_type", "reason", "original_text", "correct_text"):
+            value = getattr(self, key, None)
+            if value:
+                data[key] = value
+        return data
 
     @classmethod
     def from_dict(cls, d: dict) -> "Annotation":
-        return cls(
+        ann = cls(
             id=d.get("id", ""),
             annotation_type=AnnotationType(d["type"]),
             start_x=d["start_x"],
@@ -183,6 +189,10 @@ class Annotation:
             updated_at=d.get("updated_at", ""),
             created_by=d.get("created_by", "ai"),
         )
+        for key in ("error_type", "reason", "original_text", "correct_text"):
+            if d.get(key):
+                setattr(ann, key, d.get(key))
+        return ann
 
 def _clamp_int(value, low: int, high: int) -> int:
     try:
