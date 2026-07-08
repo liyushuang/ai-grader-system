@@ -13,6 +13,7 @@ class SidePanel {
         this._editingId = null;
         this._currentTab = 'report';
         this.reportPanel = null;
+        this.gradingData = null;
     }
 
     init() {
@@ -59,6 +60,7 @@ class SidePanel {
      * 加载批改数据并渲染报告
      */
     loadGradingData(gradingData) {
+        this.gradingData = gradingData || null;
         if (this.reportPanel && gradingData) {
             this.reportPanel.render(gradingData);
         }
@@ -66,6 +68,7 @@ class SidePanel {
 
     clearAllViews() {
         this.renderSideBySide([]);
+        this.gradingData = null;
         this.showEdit(null);
         if (this.reportPanel) this.reportPanel.clear();
     }
@@ -157,13 +160,15 @@ class SidePanel {
         const oldCards = Array.from(panel.getElementsByClassName('side-card'));
         oldCards.forEach(c => c.remove());
         
-        if (annotations.length === 0) {
+        const visibleAnnotations = annotations.filter(ann => ann.type !== 'circle');
+
+        if (visibleAnnotations.length === 0) {
             const svg = document.getElementById('sideBySideLines');
             if (svg) svg.innerHTML = '';
             return;
         }
         
-        annotations.forEach((ann, idx) => {
+        visibleAnnotations.forEach((ann, idx) => {
             const card = document.createElement('div');
             card.className = 'side-card';
             card.dataset.annId = ann.id;
@@ -176,10 +181,17 @@ class SidePanel {
             };
             
             const iconMap = { wavy: '∼', line: '—', circle: '○', star: '★' };
-            const typeLabelMap = { wavy: '点睛', line: '纠错', circle: '错字', star: '点睛' };
+            const typeLabelMap = { wavy: '点睛', line: '订正', circle: '错字', star: '点睛' };
             const icon = iconMap[ann.type] || '?';
             const typeLabel = typeLabelMap[ann.type] || ann.type;
             const sourceLabel = ann.source === 'ai' ? '🤖 AI' : '👤 教师';
+            const detail = this._getAnnotationDetail(ann);
+            const detailHtml = detail ? `
+                <div class="card-evidence">
+                    ${detail.errorType ? `<span class="card-tag">${this._escapeHtml(detail.errorType)}</span>` : ''}
+                    ${detail.reason ? `<span class="card-reason">依据：${this._escapeHtml(detail.reason)}</span>` : ''}
+                </div>
+            ` : '';
             
             card.innerHTML = `
                 <span class="card-number">${idx + 1}</span>
@@ -191,6 +203,7 @@ class SidePanel {
                     <span style="font-size:11px;color:#94a3b8;">${sourceLabel}</span>
                 </div>
                 <div class="card-comment">${this._escapeHtml(ann.comment || '(无批注)')}</div>
+                ${detailHtml}
             `;
             
             panel.appendChild(card);
@@ -200,6 +213,24 @@ class SidePanel {
         requestAnimationFrame(() => {
             this.layoutSideBySideCards();
         });
+    }
+
+    _getAnnotationDetail(ann) {
+        if (!ann || !this.gradingData) return null;
+        const analyses = this.gradingData.sentence_analyses || [];
+        const sa = analyses[Number(ann.sentence_index)];
+        const err = sa && sa.errors ? sa.errors[Number(ann.error_index)] : null;
+        if (!err) {
+            if (ann.type === 'wavy') {
+                const comment = ann.comment || '';
+                return comment ? { errorType: '点睛', reason: comment.replace(/^点睛句[:：]?/, '') } : null;
+            }
+            return null;
+        }
+        return {
+            errorType: err.error_type || ann.label || '',
+            reason: err.reason || ''
+        };
     }
 
     updateSideCardSelection(selectedId) {
@@ -249,7 +280,7 @@ class SidePanel {
                 card: card,
                 ann: ann,
                 targetY: targetY,
-                height: card.offsetHeight || 90,
+                height: card.offsetHeight || 118,
                 currentY: targetY
             };
         });
@@ -258,7 +289,7 @@ class SidePanel {
         items.sort((a, b) => a.targetY - b.targetY);
         
         // 2. Resolve overlap by pushing down
-        const margin = 14;
+        const margin = 20;
         const minTop = 58;
         items.forEach(item => {
             if (item.currentY < minTop) item.currentY = minTop;
@@ -296,33 +327,10 @@ class SidePanel {
             item.card.style.top = `${item.currentY}px`;
         });
         
-        // 5. Draw connecting curves in SVG
+        // 5. 不再绘制连接线，只通过画布编号与卡片编号对应。
         const svg = document.getElementById('sideBySideLines');
         if (!svg) return;
         svg.innerHTML = '';
-        
-        items.forEach(item => {
-            if (!item.ann) return;
-            const yImg = (item.ann.startY + item.ann.endY) / 2;
-            const targetY = canvasTopInPanel + yImg * zoom + 10;
-            
-            // card connection Y
-            const cardY = item.currentY + 15;
-            
-            const colorMap = { wavy: '#10b981', line: '#ef4444', circle: '#ef4444', star: '#f59e0b' };
-            const color = colorMap[item.ann.type] || '#3b82f6';
-            const isSelected = item.id === window.annotationStore.selectedId;
-            
-            const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-            const d = `M 0 ${targetY} C 14 ${targetY}, 16 ${cardY}, 32 ${cardY}`;
-            path.setAttribute('d', d);
-            path.setAttribute('stroke', color);
-            path.setAttribute('stroke-width', isSelected ? '2' : '1.2');
-            path.setAttribute('fill', 'none');
-            path.setAttribute('stroke-dasharray', item.ann.source === 'ai' ? '3,3' : 'none');
-            path.setAttribute('opacity', isSelected ? '1' : '0.6');
-            svg.appendChild(path);
-        });
     }
 }
 

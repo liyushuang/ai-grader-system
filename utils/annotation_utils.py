@@ -24,15 +24,13 @@ def generate_annotations_from_result(result: GradingResult) -> List[Annotation]:
     """
     从批改结果自动生成初始标注列表。
 
-    只保留老师式少量高价值旁批，避免把模型输出全量铺到画面上。
+    最多保留 12 条老师式高价值旁批，避免把模型输出全量铺到画面上。
     """
     error_candidates: List[Tuple[int, int, SentenceAnalysis, ErrorItem]] = []
     wave_candidates: List[Tuple[int, SentenceAnalysis]] = []
 
     for si, sa in enumerate(result.sentence_analyses):
         for ei, err in enumerate(sa.errors):
-            if getattr(err, "model_added", False):
-                continue
             if err.bbox and _is_canvas_worthy_error(err):
                 error_candidates.append((si, ei, sa, err))
         if sa.is_highlight and sa.bbox:
@@ -238,12 +236,16 @@ def _teacher_error_comment(err: ErrorItem) -> str:
     if "主语" in text and err.correct_text:
         return _clip_comment(f"补充主语：{err.correct_text}", 30)
     if "错字" in text or "不规范" in text:
+        if err.original_text and err.correct_text:
+            return _clip_comment(f"{err.original_text}应写作{err.correct_text}", 30)
+        if err.correct_text:
+            return _clip_comment(f"这里改成{err.correct_text}", 30)
         if err.original_text:
-            return _clip_comment(f"错字：{err.original_text}", 30)
+            return _clip_comment(f"圈出错字：{err.original_text}", 30)
     if err.original_text in ("佩环", "珮环") or "佩环" in text or "珮环" in text:
         return _clip_comment("佩环：玉佩玉环相碰撞", 30)
     if err.original_text and err.correct_text:
-        return _clip_comment(f"改：{err.original_text}→{err.correct_text}")
+        return _clip_comment(f"这里改成{err.correct_text}", 32)
     if err.reason:
         return _clip_comment(f"需订正：{err.reason}")
     return _clip_comment(f"需订正：{err.error_type.value}")

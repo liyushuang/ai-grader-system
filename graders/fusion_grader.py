@@ -149,7 +149,6 @@ class FusionGrader(GradingStrategy):
                 sentence_analyses, ocr_lines, llm_result,
                 grading_input, start_time,
             )
-            self._preserve_high_confidence_rules(result, sentence_analyses)
             self._validate_teacher_report(result)
             self._write_pipeline_debug(grading_input, debug_data, result)
 
@@ -206,7 +205,7 @@ class FusionGrader(GradingStrategy):
                    "message": f"✅ 标准对齐完成：{aligned_count}/{len(aligned)} 个单元有作答，{needs_review_count} 个需复核"}
 
             # ── Phase 4: 规则引擎初判 ──
-            yield {"type": "stage", "stage": "rule", "message": "📐 正在识别补主语、重点词、错别字和明显漏译..."}
+            yield {"type": "stage", "stage": "rule", "message": "📐 正在生成补主语、重点词、错别字和漏译候选..."}
             engine = RuleEngine()
             sentence_analyses = engine.grade_aligned_segments(aligned)
             self._map_aligned_coords(sentence_analyses, aligned, body_lines)
@@ -220,7 +219,7 @@ class FusionGrader(GradingStrategy):
             }
             debug_data["full_text"] = full_text
             yield {"type": "stage", "stage": "rule_done",
-                   "message": f"✅ 规则初判：{len(aligned)} 个批改单元，"
+                   "message": f"✅ 规则候选：{len(aligned)} 个批改单元，"
                              f"{sum(len(sa.errors) for sa in sentence_analyses)} 处高置信/候选问题，"
                              f"{locatable_rule_count} 处可定位"}
 
@@ -252,7 +251,7 @@ class FusionGrader(GradingStrategy):
                 if hasattr(llm_result, "review_payload"):
                     review_count = len(llm_result.review_payload.get("confirmed_rule_errors", []))
                     add_count = len(llm_result.review_payload.get("add_errors", []))
-                    message = f"✅ AI复核完成：复核 {review_count} 个规则候选，补充 {add_count} 个候选"
+                    message = f"✅ 模型批改完成：判断 {review_count} 个规则候选，补充 {add_count} 个候选"
                 else:
                     message = f"✅ AI 分析完成：{llm_result.total_score}分，{llm_result.total_errors} 处错误"
                 yield {"type": "stage", "stage": "llm_done", "message": message}
@@ -264,22 +263,21 @@ class FusionGrader(GradingStrategy):
                         recognized_text=full_text,
                         sentence_analyses=sentence_analyses,
                         total_score=0,
-                        overall_comment=f"模型复核失败: {exc}",
+                        overall_comment=f"模型批改失败: {exc}",
                         status=GradingStatus.PROCESSING_ERROR,
                         error_message=str(exc),
                         grader_name=self.name,
                     ),
                 )
-                yield {"type": "error", "message": f"模型复核失败: {exc}"}
+                yield {"type": "error", "message": f"模型批改失败: {exc}"}
                 return
 
             # ── Phase 7: 融合坐标 ──
-            yield {"type": "stage", "stage": "fuse", "message": "🔗 正在融合模型复核结果与 OCR 坐标..."}
+            yield {"type": "stage", "stage": "fuse", "message": "🔗 正在把模型批改结果回填到 OCR 坐标..."}
             result = self._fuse_results(
                 sentence_analyses, ocr_lines, llm_result,
                 grading_input, start_time,
             )
-            self._preserve_high_confidence_rules(result, sentence_analyses)
             self._validate_teacher_report(result)
             self._write_pipeline_debug(grading_input, debug_data, result)
             yield {"type": "stage", "stage": "fuse_done",
@@ -645,7 +643,7 @@ class FusionGrader(GradingStrategy):
         lines = [
             "## 规则引擎预处理结果",
             "说明：anchor_id 是 OCR 识别出的字级锚点。你只能引用这些 anchor_id，不能创建或修改锚点。",
-            "high_confidence=true 的错误是本地规则命中的老师式高置信问题，必须保留；低置信内容仅供复核。",
+            "说明：本地规则只做简单候选提示，主要用于错别字/明显漏译/补主语初筛；最终是否成立由你按原文、参考译文和学生译文判断。",
         ]
         for i, sa in enumerate(analyses, 1):
             status = []
@@ -690,8 +688,8 @@ class FusionGrader(GradingStrategy):
 
         return f"""你是资深中学语文教师，专门复核《{inp.textbook_name}》文言文翻译作业。
 
-你的职责：只做“文本批改推理”，不要输出坐标、bbox、画线位置。
-坐标会由后续程序用 OCR bbox 回填。你只需要判断哪些问题成立、哪些不成立、补充少量高价值问题，并生成报告。
+你的职责：作为最终批改模型，只做“文本批改推理”，不要输出坐标、bbox、画线位置。
+坐标会由后续程序用 OCR bbox 回填。你必须基于 OCR 学生译文和逐句参照独立批改；规则初判只作为简单候选提示，不能替代你的判断。
 
 ## 逐句精确参照（必须逐句严格对照）
 {sentence_pairs}
@@ -703,19 +701,20 @@ class FusionGrader(GradingStrategy):
 {pre_judgment}
 
 ## 复核硬约束
-1. high_confidence 候选必须保留；只能优化报告措辞，不能驳回。
-2. review_candidate 必须逐条判断 confirm 或 reject。若学生文本中有语义等价表达，应 reject。
-3. 你可以补充 add_errors，但仅限“错别字/不规范字”；必须引用 OCR anchors 中存在的 anchor_ids，且 anchor_ids 拼出的文字必须等于 evidence_text；最多补充 1 条。
+1. 规则候选都只是候选；必须逐条判断 confirm 或 reject。若学生文本中有语义等价表达，或规则误判，应 reject。
+2. 核心批改由你完成：即使规则没有提出，只要学生译文存在明确问题，也应补充 add_errors。
+3. 你可以补充 add_errors，范围包括但不限于“重点词误译、漏译、补主语、句式/语序、错别字/不规范字、表达不当”；必须引用 OCR anchors 中已经存在的 anchor_ids，不能创建、改写、猜测 anchor_id；且 anchor_ids 拼出的文字必须等于 evidence_text；最多补充 12 条，最终画布最多展示 12 条，由程序按优先级筛选。
 4. 不要输出 bbox、坐标、画线位置。
-5. 语义不准、漏译、重点词理解不到位等问题只写入 report.weaknesses 或 suggestions，不要加入 add_errors。
+5. 语义不准、漏译、重点词理解不到位等问题，只有在能用 anchor_ids 精确定位原文短词或短句时才加入 add_errors；不能定位或低置信的问题写入 report.weaknesses 或 suggestions。
 6. 批改对象是文言文翻译，不是作文赏析；优先看重点词、补主语、错别字、特殊句式。
 7. 输出必须是纯 JSON，不要 markdown。
-8. OCR 噪声或长句误译，例如“雪白的曝光倾泄而下”这类内容，不要加入 add_errors；最多写进 report.weaknesses。
+8. 不要把 OCR 文本自行改写成你猜测的文字；若 OCR 中确有该词句且 anchor_ids 可精确引用，就按学生译文文本正常批改。
 9. highlights 只允许输出真正像老师旁批的短句，例如“点睛句：石底奇观理解到位”，不要写“情感基调”“全篇感情”这类泛泛赏析。
-10. 如果不能确定 anchor_ids 与 evidence_text 完全对应，不要输出 add_errors。
-11. report 中 overall_comment、overall_comment_general、overall_comment_encouraging、overall_comment_instructive、polished_full_translation 必须全部填写有效内容，不能写“暂无”、不能描述 OCR/清洗/规则/模型流程。
-12. polished_full_translation 必须只基于当前 OCR 学生译文和《{inp.textbook_name}》原文生成连贯现代汉语译文；当前页没识别到的后文不要编造，也不能混入其他作文内容。
-13. 教师总评必须围绕当前页学生译文的问题和优点，不能出现“小区四季”“作文”“流程已完成”等无关内容。
+10. 如果不能确定 anchor_ids 与 evidence_text 完全对应，不要输出 add_errors；可以把问题写入 report，但不要画布标注。
+11. add_errors 优先级：补主语/漏译 > 重点词误译 > 句式语序 > 错别字/不规范字；不要为了凑数量输出泛泛问题。
+12. report 中 overall_comment、overall_comment_general、overall_comment_encouraging、overall_comment_instructive、polished_full_translation 必须全部填写有效内容，不能写“暂无”、不能描述 OCR/清洗/规则/模型流程。
+13. polished_full_translation 必须只基于当前 OCR 学生译文和《{inp.textbook_name}》原文生成连贯现代汉语译文；当前页没识别到的后文不要编造，也不能混入其他作文内容。
+14. 教师总评必须围绕当前页学生译文的问题和优点，不能出现“小区四季”“作文”“流程已完成”等无关内容。
 
 ## 输出结构
 {{
@@ -1090,16 +1089,13 @@ class FusionGrader(GradingStrategy):
         for si, sa in enumerate(fused_analyses, 1):
             kept = []
             for ei, err in enumerate(sa.errors):
-                if self._is_high_confidence_rule(err):
-                    kept.append(err)
-                    continue
                 action = decisions.get((si, ei))
                 if action == "confirm":
                     kept.append(err)
             sa.errors = kept
 
         anchor_index = self._build_ocr_anchor_index(ocr_lines)
-        for item in payload.get("add_errors", [])[:2]:
+        for item in payload.get("add_errors", [])[:12]:
             try:
                 segment_id = int(item.get("segment_id", 0))
             except Exception:
@@ -1129,7 +1125,7 @@ class FusionGrader(GradingStrategy):
             if err.bbox and not self._has_similar_error(target.errors, err):
                 target.errors.append(err)
 
-        for item in payload.get("highlights", [])[:2]:
+        for item in payload.get("highlights", [])[:4]:
             try:
                 segment_id = int(item.get("segment_id", 0))
             except Exception:
@@ -1176,17 +1172,13 @@ class FusionGrader(GradingStrategy):
         }
 
     def _can_accept_review_add_error(self, item: dict) -> bool:
-        """模型补充问题只接受短词级高置信错字/重点词，长句误译默认进报告不画布。"""
+        """只做画布展示安全校验，不再按规则类型白名单过滤模型批改结果。"""
         evidence = self._clean_for_match(item.get("evidence_text") or item.get("original_text") or "")
-        err_type = item.get("error_type", "")
-        confidence = str(item.get("confidence", "")).lower()
-        if confidence not in ("high", "高"):
+        if not evidence:
             return False
-        if len(evidence) > 6:
+        if len(evidence) > 18:
             return False
-        if any(bad in evidence for bad in ["突然", "曝光", "雪白"]):
-            return False
-        return ("错别字" in err_type or "不规范" in err_type)
+        return True
 
     def _build_ocr_anchor_index(self, ocr_lines: list) -> dict:
         from assignment_pipeline import OCRCleaner

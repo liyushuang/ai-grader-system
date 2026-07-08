@@ -106,8 +106,10 @@ class CanvasManager {
             }
         });
 
-        annotations.forEach((ann, index) => {
-            const fabricObj = this._createAnnotationObject(ann, index + 1);
+        let displayIndex = 0;
+        annotations.forEach((ann) => {
+            const badgeIndex = ann.type === 'circle' ? null : ++displayIndex;
+            const fabricObj = this._createAnnotationObject(ann, badgeIndex);
             if (fabricObj) {
                 fabricObj.annId = ann.id;
                 this.fabric.add(fabricObj);
@@ -166,7 +168,9 @@ class CanvasManager {
                 obj = StraightLine.create(sx1, sy1, sx2, sy2);
                 break;
             case 'circle':
-                obj = CircleAnnotation.create(sx1, sy1, sx2, sy2);
+                obj = CircleAnnotation.create(sx1, sy1, sx2, sy2, {
+                    correctionText: this._getCircleCorrectionText(ann),
+                });
                 break;
             case 'star':
                 obj = StarAnnotation.create(sx1, sy1);
@@ -176,6 +180,23 @@ class CanvasManager {
             this._attachNumberBadge(obj, sx1, sy1, index);
         }
         return obj;
+    }
+
+    _getCircleCorrectionText(ann) {
+        const comment = ann.comment || '';
+        const arrow = comment.includes('→') ? comment.split('→').pop() : '';
+        if (arrow) return arrow.trim().replace(/[。；;，,].*$/, '');
+        const shouldWrite = comment.match(/应写作(.+)$/);
+        if (shouldWrite) return shouldWrite[1].trim();
+        const changeTo = comment.match(/这里改成(.+)$/);
+        if (changeTo) return changeTo[1].trim();
+        return comment
+            .replace(/^建议改为[:：]?/, '')
+            .replace(/^建议改[:：]?/, '')
+            .replace(/^改为[:：]?/, '')
+            .replace(/^改[:：]?/, '')
+            .replace(/^错字[:：]?/, '')
+            .trim();
     }
 
     _attachNumberBadge(group, x, y, index) {

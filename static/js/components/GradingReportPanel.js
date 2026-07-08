@@ -174,7 +174,7 @@ class GradingReportPanel {
 
         const summary = this.getActiveCommentText() || d.homework_completion || '本次作业整体完成较认真，可以继续围绕准确翻译和表达通顺两点改进。';
         const corrections = [
-            ...correctionItems.map((a, idx) => `${idx + 1}. ${a.comment || '这处需要重新订正，注意和原文逐字对应。'}`),
+            ...correctionItems.map((a, idx) => `${idx + 1}. ${this._formatCorrectionWithEvidence(a, d)}`),
             ...errorItems.map((e, idx) => `${correctionItems.length + idx + 1}. ${e}`)
         ].slice(0, 6);
         const strengths = [
@@ -227,6 +227,35 @@ class GradingReportPanel {
                 <textarea class="textarea-editable deliverable-textarea parent" id="parentFeedbackText" placeholder="输入家长反馈...">${this._escapeHtml(d.parent_feedback || '')}</textarea>
             </section>
         `;
+    }
+
+    _compactCorrectionText(text) {
+        return String(text || '')
+            .replace(/^建议改为[:：]?/, '改：')
+            .replace(/^建议改[:：]?/, '改：')
+            .replace(/^改为[:：]?/, '改：')
+            .trim();
+    }
+
+    _formatCorrectionWithEvidence(annotation, data) {
+        const text = this._compactCorrectionText(annotation.comment) || '这处需要重新订正，注意和原文逐字对应。';
+        const detail = this._getAnnotationErrorDetail(annotation, data);
+        if (!detail) return text;
+        const label = detail.errorType ? `${detail.errorType}：` : '';
+        const reason = detail.reason ? `（依据：${detail.reason}）` : '';
+        return `${label}${text}${reason}`;
+    }
+
+    _getAnnotationErrorDetail(annotation, data) {
+        if (!annotation || !data) return null;
+        const analyses = data.sentence_analyses || [];
+        const sentence = analyses[Number(annotation.sentence_index)];
+        const error = sentence && sentence.errors ? sentence.errors[Number(annotation.error_index)] : null;
+        if (!error) return null;
+        return {
+            errorType: error.error_type || '',
+            reason: error.reason || ''
+        };
     }
 
     _renderBulletList(items, emptyText) {

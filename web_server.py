@@ -80,7 +80,12 @@ HTML_TEMPLATE = """
         .toolbar { position: fixed; left: 50%; bottom: 16px; transform: translateX(-50%); height: 56px;
                    background: rgba(31,41,55,0.96); border: 1px solid rgba(255,255,255,0.12);
                    display: flex; flex-direction: row; align-items: center; padding: 8px 12px; gap: 6px;
-                   border-radius: 10px; box-shadow: 0 12px 32px rgba(15,23,42,0.28); z-index: 80; }
+                   border-radius: 10px; box-shadow: 0 12px 32px rgba(15,23,42,0.28); z-index: 80; user-select: none; }
+        .toolbar.dragging { cursor: grabbing; }
+        .tool-drag-handle { width: 22px; height: 38px; border-radius: 7px; cursor: grab;
+                    display: flex; align-items: center; justify-content: center; color: #cbd5e1;
+                    font-size: 16px; border: 1px solid rgba(255,255,255,0.08); background: rgba(255,255,255,0.06); }
+        .tool-drag-handle:hover { background: rgba(255,255,255,0.12); color: #fff; }
         .tool-btn { width: 42px; height: 42px; border: 1px solid transparent; border-radius: 8px;
                     background: transparent; color: #e5e7eb; cursor: pointer; display: flex; align-items: center; 
                     justify-content: center; font-size: 18px; transition: all 0.18s; position: relative; }
@@ -132,36 +137,34 @@ HTML_TEMPLATE = """
         }
         .side-card {
             position: absolute;
-            width: calc(100% - 58px);
-            left: 42px;
+            width: calc(100% - 46px);
+            left: 36px;
             background: transparent;
-            border: 1px solid transparent;
-            border-radius: 8px;
-            padding: 9px 10px;
+            border: 0;
+            border-radius: 4px;
+            padding: 4px 8px 8px 8px;
             box-shadow: none;
             transition: all 0.2s ease;
             cursor: pointer;
             z-index: 2;
         }
         .side-card:hover {
-            background: #f8fafc;
-            border-color: #e5e7eb;
+            background: rgba(239, 68, 68, 0.03);
         }
         .side-card.selected {
-            border-color: #93c5fd;
-            box-shadow: 0 0 0 3px rgba(37,99,235,0.10);
-            background: #f8fbff;
+            box-shadow: inset 3px 0 0 rgba(96,165,250,0.65);
+            background: rgba(239, 68, 68, 0.04);
         }
         .side-card .card-header {
-            display: flex;
+            display: none;
             align-items: center;
             justify-content: space-between;
             margin-bottom: 4px;
         }
         .side-card .card-number {
             position: absolute;
-            left: -30px;
-            top: 12px;
+            left: -31px;
+            top: 8px;
             width: 24px;
             height: 24px;
             border-radius: 50%;
@@ -198,13 +201,40 @@ HTML_TEMPLATE = """
         .side-card .card-type.circle { color: #dc2626; }
         .side-card .card-type.star { color: #d97706; }
         .side-card .card-comment {
-            font-size: 19px;
+            font-size: 22px;
             color: #ef2f2f;
-            line-height: 1.7;
+            line-height: 1.85;
             font-weight: 700;
             word-break: break-word;
             font-family: 'Kaiti SC', 'STKaiti', 'KaiTi', 'PingFang SC', serif;
             text-wrap: pretty;
+            letter-spacing: 0;
+            text-shadow:
+                0 1px 0 rgba(255,255,255,0.95),
+                0 0 1px rgba(255,255,255,0.85);
+        }
+        .side-card .card-evidence {
+            margin-top: 6px;
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 6px;
+            font-size: 12px;
+            line-height: 1.6;
+            color: #64748b;
+            font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif;
+        }
+        .side-card .card-tag {
+            display: inline-flex;
+            align-items: center;
+            padding: 1px 6px;
+            border-radius: 4px;
+            background: rgba(239, 68, 68, 0.08);
+            color: #dc2626;
+            font-weight: 700;
+        }
+        .side-card .card-reason {
+            color: #64748b;
         }
         .side-card .card-meta {
             margin-top: 4px;
@@ -503,7 +533,7 @@ HTML_TEMPLATE = """
         
         /* ── Thinking Panel（内联展示，固定高度不跳动）── */
         .thinking-panel { display: none; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
-            width: min(760px, calc(100% - 72px)); margin: 0;
+            width: min(880px, calc(100% - 72px)); margin: 0;
             background: #fff; border: 1px solid #e8ecf1; border-radius: 10px;
             box-shadow: 0 14px 40px rgba(15,23,42,0.12); flex-direction: column; overflow: hidden;
             height: min(420px, calc(100% - 120px)); flex-shrink: 0; transition: all 0.3s ease; z-index: 35; }
@@ -528,9 +558,9 @@ HTML_TEMPLATE = """
             border-radius: 0 2px 2px 0; transition: width 0.4s ease; }
         
         /* 阶段标签 — 固定布局不跳动 */
-        .thinking-stages { padding: 10px 18px; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; flex-shrink: 0; }
-        .thinking-stage { display: flex; align-items: center; gap: 6px; font-size: 12px; color: #94a3b8;
-            padding: 6px 10px; border-radius: 8px; background: #fafafa; transition: all 0.3s; min-width: 0; }
+        .thinking-stages { padding: 10px 14px; display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 6px; flex-shrink: 0; }
+        .thinking-stage { display: flex; align-items: center; justify-content: center; gap: 4px; font-size: 12px; color: #94a3b8;
+            padding: 6px 6px; border-radius: 8px; background: #fafafa; transition: all 0.3s; min-width: 0; white-space: nowrap; }
         .thinking-stage.active { color: #4a90d9; background: #e8f0fe; font-weight: 600; }
         .thinking-stage.done { color: #52c41a; background: #f0fdf4; }
         .stage-icon { font-size: 12px; width: 14px; text-align: center; }
@@ -555,6 +585,7 @@ HTML_TEMPLATE = """
         .llm-label:not(.error) { background: #e8f0fe; color: #4a90d9; }
         .llm-label.error { background: #fee2e2; color: #dc2626; }
         .llm-status { padding: 4px 0; font-size: 11px; color: #999; font-style: italic; }
+        .llm-final { margin-top: 8px; padding: 8px 10px; border-radius: 8px; background: #f0fdf4; color: #166534; font-size: 12px; line-height: 1.6; }
         
         /* 完成提示 */
         .thinking-done-badge { display: none; align-items: center; gap: 4px; font-size: 11px; 
@@ -597,6 +628,7 @@ HTML_TEMPLATE = """
     <div class="main-layout empty" id="mainLayout">
         <!-- 工具栏 -->
         <div class="toolbar" id="toolbar">
+            <div class="tool-drag-handle" id="toolbarDragHandle" title="拖动工具栏">⋮</div>
             <button class="tool-btn" data-tooltip="选择/移动 (V)" id="toolSelect" onclick="setTool('select')">🖱️</button>
             <div class="tool-separator"></div>
             <button class="tool-btn" data-tooltip="波浪线 — 点睛句 (W)" id="toolWavy" onclick="setTool('wavy')" style="color:#059669;">∼</button>
@@ -661,8 +693,8 @@ HTML_TEMPLATE = """
                         <div class="thinking-stage" id="stage-ocr"><span class="stage-icon">🔍</span>OCR识别</div>
                         <div class="thinking-stage" id="stage-clean"><span class="stage-icon">🧹</span>文本清洗</div>
                         <div class="thinking-stage" id="stage-align"><span class="stage-icon">🧭</span>标准对齐</div>
-                        <div class="thinking-stage" id="stage-rule"><span class="stage-icon">📐</span>规则初判</div>
-                        <div class="thinking-stage" id="stage-llm"><span class="stage-icon">🧠</span>模型复核</div>
+                        <div class="thinking-stage" id="stage-rule"><span class="stage-icon">📐</span>规则候选</div>
+                        <div class="thinking-stage" id="stage-llm"><span class="stage-icon">🧠</span>模型批改</div>
                         <div class="thinking-stage" id="stage-fuse"><span class="stage-icon">🔗</span>坐标回填</div>
                     </div>
                     <div class="thinking-output" id="thinkingOutput"></div>

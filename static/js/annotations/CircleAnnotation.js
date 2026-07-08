@@ -3,6 +3,9 @@
  */
 class CircleAnnotation {
     static create(x1, y1, x2, y2, options = {}) {
+        const correctionText = options.correctionText || '';
+        const groupOptions = { ...options };
+        delete groupOptions.correctionText;
         const color = '#EF4444';
         const left = Math.min(x1, x2);
         const top = Math.min(y1, y2);
@@ -39,7 +42,28 @@ class CircleAnnotation {
             objectCaching: true,
         });
 
-        const group = new fabric.Group([glow, ellipse], {
+        const objects = [glow, ellipse];
+        if (correctionText) {
+            const label = new fabric.Text(correctionText, {
+                left: left + width / 2,
+                top: Math.max(0, top - 26),
+                originX: 'center',
+                originY: 'top',
+                fill: color,
+                fontSize: 18,
+                fontWeight: '700',
+                fontFamily: 'Arial, "Microsoft YaHei", sans-serif',
+                stroke: '#fff',
+                strokeWidth: 3,
+                paintFirst: 'stroke',
+                selectable: false,
+                evented: false,
+                objectCaching: true,
+            });
+            objects.push(label);
+        }
+
+        const group = new fabric.Group(objects, {
             selectable: true,
             evented: true,
             hasControls: false,
@@ -48,7 +72,7 @@ class CircleAnnotation {
             borderScaleFactor: 1,
             padding: 4,
             lockRotation: true,
-            ...options,
+            ...groupOptions,
         });
 
         group.annotationType = 'circle';

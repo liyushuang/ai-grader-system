@@ -312,6 +312,7 @@ let aiOriginalAnnotations = null;  // 当前图片的AI原始标注备份
 let llmOutputBuffer = '';  // LLM流式输出缓冲
 let stageLogBuffer = '';  // 阶段进度日志缓冲
 let gradingFailures = [];  // 批改失败原因
+let isRegradingCurrentImage = false;
 
 function isFusionPipeline(grader) {
     return grader === 'fusion' || grader === 'ark_code';
@@ -323,6 +324,35 @@ function getGraderDisplayName(grader) {
         ark_code: '方舟 ark-code-latest',
     };
     return names[grader] || grader || '未知模型';
+}
+
+function showFusionThinkingPanel(grader) {
+    const thinkingPanel = document.getElementById('thinkingPanel');
+    const thinkingOutput = document.getElementById('thinkingOutput');
+    const thinkingProgress = document.getElementById('thinkingProgress');
+    const thinkingDoneBadge = document.getElementById('thinkingDoneBadge');
+    const thinkingHeaderText = document.querySelector('#thinkingPanel .header-text');
+    if (!thinkingPanel) return;
+
+    thinkingPanel.classList.add('show');
+    thinkingPanel.classList.remove('collapsed');
+    if (thinkingHeaderText) {
+        thinkingHeaderText.textContent = `AI 批改思考过程 · ${getGraderDisplayName(grader)}`;
+    }
+
+    const stageIcons = { ocr: '🔍', clean: '🧹', align: '🧭', rule: '📐', llm: '🧠', fuse: '🔗' };
+    document.querySelectorAll('.thinking-stage').forEach(el => {
+        el.classList.remove('active', 'done');
+        const icon = el.querySelector('.stage-icon');
+        const sid = (el.id || '').replace('stage-', '');
+        if (icon) { icon.classList.remove('spin'); icon.textContent = stageIcons[sid] || icon.textContent; }
+    });
+    if (thinkingOutput) thinkingOutput.textContent = '';
+    if (thinkingProgress) thinkingProgress.style.width = '0%';
+    if (thinkingDoneBadge) thinkingDoneBadge.classList.remove('show');
+    llmOutputBuffer = '';
+    stageLogBuffer = `<div class="llm-status">• 当前模型：${escapeHtml(getGraderDisplayName(grader))}</div>`;
+    if (thinkingOutput) thinkingOutput.innerHTML = stageLogBuffer;
 }
 
 function handleFileSelect(input) {
@@ -341,32 +371,8 @@ function handleFileSelect(input) {
     }
     
     // 显示思考过程面板（融合方案专属，内联展示）
-    const thinkingPanel = document.getElementById('thinkingPanel');
-    const thinkingStages = document.getElementById('thinkingStages');
-    const thinkingOutput = document.getElementById('thinkingOutput');
-    const thinkingProgress = document.getElementById('thinkingProgress');
-    const thinkingDoneBadge = document.getElementById('thinkingDoneBadge');
-    const thinkingHeaderText = document.querySelector('#thinkingPanel .header-text');
     if (isFusionPipeline(grader)) {
-        thinkingPanel.classList.add('show');
-        thinkingPanel.classList.remove('collapsed');
-        if (thinkingHeaderText) {
-            thinkingHeaderText.textContent = `AI 批改思考过程 · ${getGraderDisplayName(grader)}`;
-        }
-        // 重置阶段标签状态（预渲染的标签只改样式，不重建DOM）
-        const stageIcons = { ocr: '🔍', clean: '🧹', align: '🧭', rule: '📐', llm: '🧠', fuse: '🔗' };
-        document.querySelectorAll('.thinking-stage').forEach(el => {
-            el.classList.remove('active', 'done');
-            const icon = el.querySelector('.stage-icon');
-            const sid = (el.id || '').replace('stage-', '');
-            if (icon) { icon.classList.remove('spin'); icon.textContent = stageIcons[sid] || icon.textContent; }
-        });
-        thinkingOutput.textContent = '';
-        thinkingProgress.style.width = '0%';
-        thinkingDoneBadge.classList.remove('show');
-        llmOutputBuffer = '';
-        stageLogBuffer = `<div class="llm-status">• 当前模型：${escapeHtml(getGraderDisplayName(grader))}</div>`;
-        thinkingOutput.innerHTML = stageLogBuffer;
+        showFusionThinkingPanel(grader);
     }
     
     // 逐个批改
@@ -445,12 +451,13 @@ async function streamGrade(file, idx, grader, onDone) {
                                 gradingData: normalizeGradingData(event.data, event.data.annotations),
                                 taskId: 'task_' + Date.now() + '_' + idx,
                                 fileName: file.name,
+                                sourceFile: file,
                             };
                             // 延迟关闭思考面板
                             setTimeout(() => {
                                 thinkingPanel.classList.remove('show');
                             }, 2000);
-                            onDone();
+                            onDone(true);
                         }
                         
                         if (event.type === 'error') {
@@ -458,7 +465,7 @@ async function streamGrade(file, idx, grader, onDone) {
                             gradingFailures.push(`${file.name}: ${message}`);
                             showToast('❌ ' + message);
                             thinkingPanel.classList.remove('show');
-                            onDone();
+                            onDone(false);
                         }
                     } catch (e) {
                         // 忽略解析错误
@@ -470,7 +477,7 @@ async function streamGrade(file, idx, grader, onDone) {
         console.error(`图片${idx+1}流式批改失败:`, err);
         gradingFailures.push(`${file.name}: ${err.message || err}`);
         thinkingPanel.classList.remove('show');
-        onDone();
+        onDone(false);
     }
 }
 
@@ -483,7 +490,7 @@ const STAGE_PROGRESS = {
 };
 const STAGE_LABELS = {
     ocr: 'OCR识别', clean: '文本清洗', align: '标准对齐',
-    rule: '规则初判', llm: '模型复核', fuse: '坐标回填',
+    rule: '规则候选', llm: '模型批改', fuse: '坐标回填',
 };
 
 function normalizeStageId(stage) {
@@ -508,6 +515,15 @@ function handleStreamEvent(event, thinkingStages, thinkingOutput, thinkingProgre
                 iconEl.textContent = '✅';
             }
         });
+        const d = event.data || {};
+        const finalHtml = [
+            `<div class="llm-final">`,
+            `<strong>模型批改结论</strong>：${escapeHtml(d.total_score || '')}/100，发现 ${escapeHtml(d.total_errors || 0)} 处需要处理的问题。`,
+            d.overall_comment ? `<br>${escapeHtml(d.overall_comment)}` : '',
+            `</div>`,
+        ].join('');
+        thinkingOutput.innerHTML = stageLogBuffer + extractReadableContent(llmOutputBuffer) + finalHtml;
+        thinkingOutput.scrollTop = thinkingOutput.scrollHeight;
         return;
     }
 
@@ -584,6 +600,9 @@ function extractReadableContent(rawText) {
     const studentMatches = rawText.match(/"student_translation"\s*:\s*"([^"]+)"/g);
     const errorMatches = rawText.match(/"error_type"\s*:\s*"([^"]+)"/g);
     const reasonMatches = rawText.match(/"reason"\s*:\s*"([^"]+)"/g);
+    const evidenceMatches = rawText.match(/"evidence_text"\s*:\s*"([^"]+)"/g);
+    const correctMatches = rawText.match(/"correct_text"\s*:\s*"([^"]*)"/g);
+    const highlightMatches = rawText.match(/"comment"\s*:\s*"([^"]+)"/g);
     
     if (classicalMatches && studentMatches) {
         // 取最后一对（当前正在分析的句子）
@@ -611,6 +630,25 @@ function extractReadableContent(rawText) {
         html += `</div>`;
         return html;
     }
+
+    if (evidenceMatches && evidenceMatches.length > 0) {
+        const evidence = evidenceMatches[evidenceMatches.length - 1].match(/"([^"]+)"$/)[1];
+        const errorType = errorMatches?.length ? errorMatches[errorMatches.length - 1].match(/"([^"]+)"$/)[1] : '候选问题';
+        const correct = correctMatches?.length ? correctMatches[correctMatches.length - 1].match(/"([^"]*)"$/)[1] : '';
+        const reason = reasonMatches?.length ? reasonMatches[reasonMatches.length - 1].match(/"([^"]+)"$/)[1] : '';
+        let html = `<div class="llm-sentence">`;
+        html += `<div class="llm-line"><span class="llm-label error">候选</span>${escapeHtml(errorType)}：${escapeHtml(evidence)}`;
+        if (correct) html += ` → ${escapeHtml(correct)}`;
+        html += `</div>`;
+        if (reason) html += `<div class="llm-line"><span class="llm-label">依据</span>${escapeHtml(reason)}</div>`;
+        html += `</div>`;
+        return html;
+    }
+
+    if (highlightMatches && rawText.includes('"highlights"')) {
+        const comment = highlightMatches[highlightMatches.length - 1].match(/"([^"]+)"$/)[1];
+        return `<div class="llm-line"><span class="llm-label">点睛</span>${escapeHtml(comment)}</div>`;
+    }
     
     // 如果还没解析到句子，显示简化状态
     if (rawText.includes('sentence_analysis')) {
@@ -626,6 +664,57 @@ function extractReadableContent(rawText) {
     // 完全无法解析时，显示截断的原始文本（但美化）
     const truncated = rawText.length > 500 ? '...' + rawText.slice(-500) : rawText;
     return '<div class="llm-status">🤖 AI 正在思考...</div>';
+}
+
+function initToolbarDrag() {
+    const toolbar = document.getElementById('toolbar');
+    const handle = document.getElementById('toolbarDragHandle');
+    if (!toolbar || !handle) return;
+
+    const saved = localStorage.getItem('aiGraderToolbarPos');
+    if (saved) {
+        try {
+            const pos = JSON.parse(saved);
+            toolbar.style.left = `${pos.left}px`;
+            toolbar.style.top = `${pos.top}px`;
+            toolbar.style.bottom = 'auto';
+            toolbar.style.transform = 'none';
+        } catch (_) {}
+    }
+
+    let dragging = false;
+    let offsetX = 0;
+    let offsetY = 0;
+
+    handle.addEventListener('pointerdown', (e) => {
+        dragging = true;
+        const rect = toolbar.getBoundingClientRect();
+        offsetX = e.clientX - rect.left;
+        offsetY = e.clientY - rect.top;
+        toolbar.classList.add('dragging');
+        handle.setPointerCapture(e.pointerId);
+    });
+
+    handle.addEventListener('pointermove', (e) => {
+        if (!dragging) return;
+        const rect = toolbar.getBoundingClientRect();
+        const left = Math.max(8, Math.min(window.innerWidth - rect.width - 8, e.clientX - offsetX));
+        const top = Math.max(62, Math.min(window.innerHeight - rect.height - 8, e.clientY - offsetY));
+        toolbar.style.left = `${left}px`;
+        toolbar.style.top = `${top}px`;
+        toolbar.style.bottom = 'auto';
+        toolbar.style.transform = 'none';
+    });
+
+    const stopDrag = () => {
+        if (!dragging) return;
+        dragging = false;
+        toolbar.classList.remove('dragging');
+        const rect = toolbar.getBoundingClientRect();
+        localStorage.setItem('aiGraderToolbarPos', JSON.stringify({ left: rect.left, top: rect.top }));
+    };
+    handle.addEventListener('pointerup', stopDrag);
+    handle.addEventListener('pointercancel', stopDrag);
 }
 
 // 折叠/展开思考面板
@@ -705,7 +794,65 @@ function buildSession(data, file, idx) {
         }, data.annotations),
         taskId: 'task_' + Date.now() + '_' + idx,
         fileName: file.name,
+        sourceFile: file,
     };
+}
+
+function rerunCurrentImageWithGrader(grader) {
+    if (isRegradingCurrentImage) return;
+    if (currentImageIndex < 0 || !imageSessions[currentImageIndex]) return;
+
+    const index = currentImageIndex;
+    const session = imageSessions[index];
+    const file = session.sourceFile;
+    if (!file) {
+        showToast('当前图片缺少原始上传文件，请重新上传后切换模型');
+        return;
+    }
+
+    isRegradingCurrentImage = true;
+    gradingFailures = [];
+    window.annotationStore.annotations = [];
+    window.annotationStore.selectedId = null;
+    window.canvasManager.renderAnnotations([]);
+    if (window.sidePanel) window.sidePanel.clearAllViews();
+    document.getElementById('mainLayout')?.classList.add('empty');
+
+    if (isFusionPipeline(grader)) {
+        showFusionThinkingPanel(grader);
+        streamGrade(file, index, grader, (success) => {
+            isRegradingCurrentImage = false;
+            currentImageIndex = -1;
+            switchToImage(index);
+            renderImageTabs();
+            if (success) {
+                showToast(`✅ 已切换并重新批改：${getGraderDisplayName(grader)}`);
+            }
+        });
+        return;
+    }
+
+    document.getElementById('loadingOverlay')?.classList.add('show');
+    const formData = new FormData();
+    formData.append('image', file);
+    formData.append('grader', grader);
+    fetch('/grade_json?t=' + Date.now(), { method: 'POST', body: formData, cache: 'no-store' })
+        .then(resp => resp.json())
+        .then(data => {
+            if (!data.ok) throw new Error(data.error || '批改失败');
+            imageSessions[index] = buildSession(data, file, index);
+            currentImageIndex = -1;
+            switchToImage(index);
+            renderImageTabs();
+            showToast(`✅ 已切换并重新批改：${getGraderDisplayName(grader)}`);
+        })
+        .catch(err => {
+            showToast('❌ ' + (err.message || '切换模型失败'));
+        })
+        .finally(() => {
+            isRegradingCurrentImage = false;
+            document.getElementById('loadingOverlay')?.classList.remove('show');
+        });
 }
 
 function loadDemoSession() {
@@ -893,9 +1040,16 @@ document.addEventListener('DOMContentLoaded', () => {
             handleFileSelect(this);
         });
     }
+
+    document.querySelectorAll('input[name="grader"]').forEach(radio => {
+        radio.addEventListener('change', function() {
+            if (this.checked) rerunCurrentImageWithGrader(this.value);
+        });
+    });
     
     // 初始化侧边面板
     if (window.sidePanel) window.sidePanel.init();
+    initToolbarDrag();
     if (window.__pageMode === 'demo') loadDemoSession();
     
     // 默认选中融合批改
